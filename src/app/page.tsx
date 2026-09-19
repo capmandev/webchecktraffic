@@ -19,6 +19,7 @@ import {
   Download,
   FileSpreadsheet,
   Zap,
+  ExternalLink,
 } from 'lucide-react';
 import { TrafficCheckRecord, DomainCheckResult } from '@/lib/types';
 import { copyDomainsToClipboard, copyTableToClipboard, exportToExcel } from '@/lib/export';
@@ -742,7 +743,16 @@ export default function Home() {
                       </td>
                       <td className="py-2 px-3 font-mono font-medium text-slate-900">
                         <div className="flex items-center gap-2">
-                          <span>{row.domain}</span>
+                          <a
+                            href={`https://${row.domain}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 hover:text-blue-600 hover:underline group"
+                            title={`Mở https://${row.domain} trong tab mới`}
+                          >
+                            <span>{row.domain}</span>
+                            <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-blue-600 opacity-60 group-hover:opacity-100" />
+                          </a>
                           {row.status === 'cached' && (
                             <span className="text-[10px] text-emerald-600 font-sans font-semibold">
                               (cache &lt;30d)
@@ -983,7 +993,16 @@ export default function Home() {
                           </button>
                         </td>
                         <td className="py-2 px-3 font-mono font-medium text-slate-900">
-                          {row.domain}
+                          <a
+                            href={`https://${row.domain}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 hover:text-blue-600 hover:underline group"
+                            title={`Mở https://${row.domain} trong tab mới`}
+                          >
+                            <span>{row.domain}</span>
+                            <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-blue-600 opacity-60 group-hover:opacity-100" />
+                          </a>
                         </td>
                         <td className="py-2 px-4 text-right font-mono font-bold text-slate-900">
                           {formatTraffic(row.monthly_traffic)}
