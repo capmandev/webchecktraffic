@@ -5,14 +5,24 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
+    const { getSupabaseClient } = await import('@/lib/supabase');
+    const supabase = getSupabaseClient();
+    let sbError: any = null;
+    let sbCount: number | null = null;
+    if (supabase) {
+      const sbRes = await supabase.from('traffic_checks').select('*');
+      sbError = sbRes.error;
+      sbCount = sbRes.data?.length ?? null;
+    }
     const records = await getAllRecords();
     return NextResponse.json({
       success: true,
       records,
       debug: {
-        hasUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
-        urlPreview: process.env.NEXT_PUBLIC_SUPABASE_URL ? process.env.NEXT_PUBLIC_SUPABASE_URL.substring(0, 30) : null,
-        hasKey: !!(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
+        sbClientExists: !!supabase,
+        sbCount,
+        sbError,
+        rawUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
       },
     });
   } catch (error: unknown) {
