@@ -5,12 +5,14 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
+    const { getSupabaseClient } = await import('@/lib/supabase');
+    const supabase = getSupabaseClient();
     const records = await getAllRecords();
     return NextResponse.json({
       success: true,
       records,
-      keyPreview: process.env.SUPABASE_SERVICE_ROLE_KEY ? process.env.SUPABASE_SERVICE_ROLE_KEY.substring(0, 15) : 'no-service-role',
-      anonPreview: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.substring(0, 15) : 'no-anon',
+      actualClientUrl: (supabase as any)?.supabaseUrl,
+      rawEnvUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
     });
   } catch (error: unknown) {
     console.error('Error fetching history:', error);
