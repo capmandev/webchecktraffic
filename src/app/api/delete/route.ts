@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { deleteRecords } from '@/lib/db';
+import { getSupabaseClient } from '@/lib/supabase';
 
 export async function POST(req: NextRequest) {
   try {
@@ -20,11 +20,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const count = await deleteRecords(domainsToDelete);
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      return NextResponse.json({ success: false, error: 'Supabase client not initialized' }, { status: 500 });
+    }
+
+    const { data, error, count } = await supabase
+      .from('traffic_checks')
+      .delete({ count: 'exact' })
+      .in('domain', domainsToDelete)
+      .select();
 
     return NextResponse.json({
-      success: true,
-      deletedCount: count,
+      success: !error,
+      deletedCount: data ? data.length : count,
+      error,
       deletedDomains: domainsToDelete,
     });
   } catch (error: unknown) {
