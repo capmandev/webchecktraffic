@@ -8,10 +8,17 @@ export async function GET() {
     const { getSupabaseClient } = await import('@/lib/supabase');
     const supabase = getSupabaseClient();
     const records = await getAllRecords();
+    const rawKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+    let jwtPayload = null;
+    try {
+      jwtPayload = JSON.parse(Buffer.from(rawKey.split('.')[1], 'base64').toString());
+    } catch (e: any) {
+      jwtPayload = { error: e.message, rawKeyStart: rawKey.substring(0, 10), isJwt: rawKey.includes('.') };
+    }
     return NextResponse.json({
       success: true,
       records,
-      actualClientUrl: (supabase as any)?.supabaseUrl,
+      jwtPayload,
       rawEnvUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
     });
   } catch (error: unknown) {
