@@ -3,7 +3,7 @@ import path from 'path';
 import { getSupabaseClient } from './supabase';
 import { TrafficCheckRecord } from './types';
 
-// Fallback local file path for local persistence when Supabase credentials are not yet configured
+// Fallback local file path ONLY when Supabase credentials are not configured at all
 const LOCAL_DB_PATH = path.join(process.cwd(), '.local-traffic-db.json');
 
 function readLocalDb(): Map<string, TrafficCheckRecord> {
@@ -49,8 +49,8 @@ export async function getRecordsByDomains(
         .in('domain', domains);
 
       if (error) {
-        console.error('Supabase query error:', error.message);
-        throw new Error('Unable to load saved data');
+        console.error('Supabase query error in getRecordsByDomains:', error.message);
+        return resultMap;
       }
 
       if (data) {
@@ -68,11 +68,12 @@ export async function getRecordsByDomains(
       }
       return resultMap;
     } catch (err) {
-      console.warn('Falling back to local cache due to Supabase query error');
+      console.error('Exception in Supabase getRecordsByDomains:', err);
+      return resultMap;
     }
   }
 
-  // Fallback to local storage
+  // Pure offline mode
   const localMap = readLocalDb();
   for (const domain of domains) {
     const rec = localMap.get(domain);
@@ -98,7 +99,7 @@ export async function upsertRecord(
   const supabase = getSupabaseClient();
   if (supabase) {
     try {
-      const payload: Partial<TrafficCheckRecord> = {
+      const payload: Record<string, any> = {
         domain,
         monthly_traffic: monthlyTraffic,
         checked_at: now,
@@ -106,32 +107,35 @@ export async function upsertRecord(
         updated_at: now,
       };
 
+      if (!existingRecord) {
+        payload.created_at = now;
+      }
+
       const { data, error } = await supabase
         .from('traffic_checks')
         .upsert(payload, { onConflict: 'domain' })
-        .select('*')
+        .select()
         .single();
 
       if (error) {
-        console.error('Supabase upsert error:', error.message);
-        throw new Error('Database error during save');
+        console.error('Supabase upsertRecord error:', error.message);
+      } else if (data) {
+        return {
+          id: data.id,
+          domain: data.domain,
+          monthly_traffic: Number(data.monthly_traffic),
+          checked_at: data.checked_at,
+          is_starred: Boolean(data.is_starred),
+          created_at: data.created_at,
+          updated_at: data.updated_at,
+        };
       }
-
-      return {
-        id: data.id,
-        domain: data.domain,
-        monthly_traffic: Number(data.monthly_traffic),
-        checked_at: data.checked_at,
-        is_starred: Boolean(data.is_starred),
-        created_at: data.created_at,
-        updated_at: data.updated_at,
-      };
     } catch (err) {
-      console.warn('Falling back to local storage for upsert');
+      console.error('Exception in Supabase upsertRecord:', err);
     }
   }
 
-  // Fallback local storage
+  // Offline fallback
   const localMap = readLocalDb();
   const record: TrafficCheckRecord = {
     id: existingRecord?.id || `local-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -160,8 +164,8 @@ export async function getAllRecords(): Promise<TrafficCheckRecord[]> {
         .order('checked_at', { ascending: false });
 
       if (error) {
-        console.error('Supabase getAll error:', error.message);
-        throw new Error('Unable to load saved data');
+        console.error('Supabase getAllRecords error:', error.message);
+        return [];
       }
 
       return (data || []).map((row) => ({
@@ -174,10 +178,12 @@ export async function getAllRecords(): Promise<TrafficCheckRecord[]> {
         updated_at: row.updated_at,
       }));
     } catch (err) {
-      console.warn('Falling back to local db for getAllRecords');
+      console.error('Exception in Supabase getAllRecords:', err);
+      return [];
     }
   }
 
+  // Pure offline mode
   const localMap = readLocalDb();
   const records = Array.from(localMap.values());
   records.sort((a, b) => new Date(b.checked_at).getTime() - new Date(a.checked_at).getTime());
@@ -200,11 +206,12 @@ export async function updateStar(domain: string, isStarred: boolean): Promise<bo
 
       if (error) {
         console.error('Supabase updateStar error:', error.message);
-        throw error;
+        return false;
       }
       return true;
     } catch (err) {
-      console.warn('Falling back to local db for updateStar');
+      console.error('Exception in Supabase updateStar:', err);
+      return false;
     }
   }
 
@@ -236,11 +243,12 @@ export async function deleteRecords(domains: string[]): Promise<number> {
 
       if (error) {
         console.error('Supabase deleteRecords error:', error.message);
-        throw error;
+        return 0;
       }
       return count || domains.length;
     } catch (err) {
-      console.warn('Falling back to local db for deleteRecords');
+      console.error('Exception in Supabase deleteRecords:', err);
+      return 0;
     }
   }
 
