@@ -3,11 +3,12 @@ import { NextRequest, NextResponse } from 'next/server';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { password } = body;
+    const rawPassword = body.password;
 
-    const expectedPassword = process.env.SITE_PASSWORD || 'traffic123';
+    const expectedPassword = (process.env.SITE_PASSWORD || 'traffic123').trim();
+    const inputPassword = typeof rawPassword === 'string' ? rawPassword.trim() : '';
 
-    if (!password || password !== expectedPassword) {
+    if (!inputPassword || inputPassword !== expectedPassword) {
       return NextResponse.json(
         { success: false, error: 'Mật khẩu không chính xác' },
         { status: 401 }
