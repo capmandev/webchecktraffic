@@ -8,18 +8,14 @@ export async function GET() {
     const { getSupabaseClient } = await import('@/lib/supabase');
     const supabase = getSupabaseClient();
     const records = await getAllRecords();
-    const rawKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-    let jwtPayload = null;
-    try {
-      jwtPayload = JSON.parse(Buffer.from(rawKey.split('.')[1], 'base64').toString());
-    } catch (e: any) {
-      jwtPayload = { error: e.message, rawKeyStart: rawKey.substring(0, 10), isJwt: rawKey.includes('.') };
-    }
+    const crypto = await import('crypto');
+    const keyHash = crypto.createHash('sha256').update((process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim()).digest('hex');
+    const urlHash = crypto.createHash('sha256').update((process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim()).digest('hex');
     return NextResponse.json({
       success: true,
       records,
-      jwtPayload,
-      rawEnvUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
+      keyHash,
+      urlHash,
     });
   } catch (error: unknown) {
     console.error('Error fetching history:', error);
