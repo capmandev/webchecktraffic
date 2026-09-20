@@ -21,8 +21,6 @@ export async function POST(req: NextRequest) {
       keys = [body.apiKey.trim()];
     }
 
-    const enableMock = body.enableMock !== false && process.env.ENABLE_MOCK_FALLBACK !== 'false';
-
     if (keys.length === 0) {
       return NextResponse.json({
         success: true,
@@ -74,43 +72,18 @@ export async function POST(req: NextRequest) {
             balance: 0,
             usable: 0,
             freeRemaining: 0,
-            error: 'Key không hợp lệ',
+            error: 'Key không hợp lệ hoặc sai key',
           });
-        } else {
-          // If in mock mode and key is a test string
-          if (enableMock) {
-            results.push({
-              key,
-              maskedKey,
-              valid: true,
-              balance: 1000,
-              usable: 1000,
-              freeRemaining: 1000,
-            });
-            totalCredits += 1000;
-          } else {
-            results.push({
-              key,
-              maskedKey,
-              valid: false,
-              balance: 0,
-              usable: 0,
-              freeRemaining: 0,
-              error: `HTTP ${response.status}`,
-            });
-          }
-        }
-      } catch (err: unknown) {
-        if (enableMock) {
+        } else if (response.status === 402 || response.status === 429) {
           results.push({
             key,
             maskedKey,
-            valid: true,
-            balance: 1000,
-            usable: 1000,
-            freeRemaining: 1000,
+            valid: false,
+            balance: 0,
+            usable: 0,
+            freeRemaining: 0,
+            error: 'Hết lượt credits / Quota',
           });
-          totalCredits += 1000;
         } else {
           results.push({
             key,
@@ -119,9 +92,19 @@ export async function POST(req: NextRequest) {
             balance: 0,
             usable: 0,
             freeRemaining: 0,
-            error: 'Timeout kết nối',
+            error: `Lỗi kết nối HTTP ${response.status}`,
           });
         }
+      } catch (err: unknown) {
+        results.push({
+          key,
+          maskedKey,
+          valid: false,
+          balance: 0,
+          usable: 0,
+          freeRemaining: 0,
+          error: 'Timeout kết nối đến Scrappa',
+        });
       }
     }
 

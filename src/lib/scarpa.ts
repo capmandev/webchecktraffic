@@ -3,6 +3,9 @@
  * Documentation: https://scrappa.co/docs/api#/operations/similarweb.data
  * Server-side only - Keeps API keys secure.
  * Supports up to 5 keys with automatic failover/rotation when a key runs out of quota.
+ * 
+ * TUYỆT ĐỐI KHÔNG BỊA SỐ LIỆU: Chỉ trả về số liệu thực từ Scrappa Similarweb API.
+ * Nếu không có API Key, key hết lượt hoặc domain không có dữ liệu, trả về error rõ ràng.
  */
 
 export interface ScarpaTrafficResult {
@@ -16,7 +19,6 @@ export interface ScarpaConfigOptions {
   apiKeys?: string[];
   apiKey?: string;
   endpoint?: string;
-  enableMock?: boolean;
 }
 
 // Parse monthly visits from Scrappa response format
@@ -52,50 +54,24 @@ function parseMonthlyTraffic(data: any): number | null {
   }
 
   // 3. Fallback to direct keys if returned
-  const fallback =
+  const direct =
     data.monthly_traffic ??
     data.monthlyTraffic ??
     data.traffic ??
     data.visits ??
     data?.data?.monthly_traffic;
 
-  if (typeof fallback === 'number' && !isNaN(fallback)) {
-    return Math.round(fallback);
+  if (typeof direct === 'number' && !isNaN(direct)) {
+    return Math.round(direct);
   }
 
   return null;
 }
 
-// Deterministic mock traffic generator for local test mode
-function getMockTraffic(domain: string): number {
-  const knownTraffic: Record<string, number> = {
-    'example.com': 1250000,
-    'google.com': 8500000,
-    'facebook.com': 5200000,
-    'test.com': 325000,
-    'abc.com': 850000,
-    'xyz.com': 120000,
-    'shopee.vn': 42000000,
-    'tiki.vn': 15600000,
-    'lazada.vn': 21000000,
-  };
-
-  if (knownTraffic[domain]) {
-    return knownTraffic[domain];
-  }
-
-  let hash = 0;
-  for (let i = 0; i < domain.length; i++) {
-    hash = (hash << 5) - hash + domain.charCodeAt(i);
-    hash |= 0;
-  }
-  const absHash = Math.abs(hash);
-  return 25000 + (absHash % 3200000);
-}
-
 /**
  * Fetch monthly traffic for a normalized domain with automatic multi-key rotation.
  * If Key 1 hits 401/402/429/quota error, automatically moves to Key 2, Key 3, etc.
+ * Tuyệt đối KHÔNG giả lập / bịa dữ liệu dưới bất kỳ hình thức nào.
  */
 export async function fetchScarpaTraffic(
   domain: string,
@@ -103,10 +79,6 @@ export async function fetchScarpaTraffic(
 ): Promise<ScarpaTrafficResult> {
   const defaultEndpoint = 'https://scrappa.co/api/similarweb';
   const endpoint = options?.endpoint?.trim() || process.env.SCARPA_API_ENDPOINT || defaultEndpoint;
-  const enableMock =
-    options?.enableMock !== undefined
-      ? options.enableMock
-      : process.env.ENABLE_MOCK_FALLBACK !== 'false';
 
   // Build list of candidate API keys (up to 5 keys)
   const candidateKeys: string[] = [];
@@ -136,22 +108,16 @@ export async function fetchScarpaTraffic(
     }
   }
 
-  // If no keys configured at all
+  // If no keys configured at all: báo lỗi rõ ràng, KHÔNG tạo số ngẫu nhiên
   if (candidateKeys.length === 0) {
-    if (enableMock) {
-      await new Promise((resolve) => setTimeout(resolve, 60));
-      return {
-        monthlyTraffic: getMockTraffic(domain),
-      };
-    }
     return {
       monthlyTraffic: null,
-      error: 'Chưa cấu hình API Key (vào mục Cấu hình API để nhập)',
+      error: 'Chưa cấu hình Scrappa API Key. Vui lòng bấm Cấu hình API để nhập key.',
     };
   }
 
   const exhaustedKeys: string[] = [];
-  let lastErrorMessage = 'Unable to retrieve traffic';
+  let lastErrorMessage = 'Không thể lấy dữ liệu traffic';
 
   // Rotate through candidate keys
   for (let i = 0; i < candidateKeys.length; i++) {
@@ -172,29 +138,43 @@ export async function fetchScarpaTraffic(
       });
 
       // Check quota / credit exhaustion / rate limit / invalid key
-      if (response.status === 401 || response.status === 402 || response.status === 429) {
+      if (response.status === 401) {
         exhaustedKeys.push(currentKey);
-        lastErrorMessage =
-          response.status === 429 ? 'API limit reached' : 'API key expired or out of credits';
-        console.warn(`Key #${i + 1} exhausted/failed (${response.status}), switching to next key...`);
+        lastErrorMessage = 'API key không hợp lệ hoặc sai key';
+        console.warn(`Key #${i + 1} unauthorized (401), switching to next key...`);
+        continue;
+      }
+
+      if (response.status === 402 || response.status === 429) {
+        exhaustedKeys.push(currentKey);
+        lastErrorMessage = response.status === 429 ? 'API bị giới hạn lượt gọi (Rate limit)' : 'API key đã hết credits / quota';
+        console.warn(`Key #${i + 1} out of credits (${response.status}), switching to next key...`);
         continue;
       }
 
       if (!response.ok) {
-        lastErrorMessage = `API error HTTP ${response.status}`;
+        lastErrorMessage = `Lỗi API HTTP ${response.status}`;
         continue;
       }
 
       const data = await response.json();
 
-      // Check if response contains an error indicating quota limit
+      // Check if response contains an error indicating quota limit or invalid key
       if (data?.error || data?.message) {
         const msg = String(data.error || data.message).toLowerCase();
-        if (msg.includes('credit') || msg.includes('quota') || msg.includes('limit') || msg.includes('unauthorized')) {
+        if (msg.includes('credit') || msg.includes('quota') || msg.includes('limit') || msg.includes('unauthorized') || msg.includes('key')) {
           exhaustedKeys.push(currentKey);
           console.warn(`Key #${i + 1} quota exhausted according to response body, switching to next key...`);
           continue;
         }
+
+        // Other domain-specific error from Similarweb (e.g. domain not found / not enough data)
+        return {
+          monthlyTraffic: null,
+          error: data.error || data.message || 'Không có dữ liệu Similarweb cho domain này',
+          usedKey: currentKey,
+          exhaustedKeys,
+        };
       }
 
       const traffic = parseMonthlyTraffic(data);
@@ -207,9 +187,10 @@ export async function fetchScarpaTraffic(
         };
       }
 
-      // If domain has 0 traffic or no data returned
+      // If domain has no traffic data on Similarweb
       return {
-        monthlyTraffic: 0,
+        monthlyTraffic: null,
+        error: 'Không có dữ liệu traffic trên Similarweb',
         usedKey: currentKey,
         exhaustedKeys,
       };
@@ -221,18 +202,10 @@ export async function fetchScarpaTraffic(
     }
   }
 
-  // If all keys exhausted or failed
-  if (enableMock) {
-    console.info(`All ${candidateKeys.length} keys exhausted or failed. Falling back to mock data.`);
-    return {
-      monthlyTraffic: getMockTraffic(domain),
-      exhaustedKeys,
-    };
-  }
-
+  // All keys exhausted or failed: tuyệt đối không fallback sang mock data
   return {
     monthlyTraffic: null,
-    error: exhaustedKeys.length > 0 ? 'Tất cả API keys đã hết lượt (quota) hoặc lỗi' : lastErrorMessage,
+    error: exhaustedKeys.length > 0 ? 'Tất cả API keys đã hết lượt (quota) hoặc không hợp lệ' : lastErrorMessage,
     exhaustedKeys,
   };
 }

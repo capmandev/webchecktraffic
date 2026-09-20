@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
 
     if (!rawDomains) {
       return NextResponse.json(
-        { success: false, error: 'No domains provided' },
+        { success: false, error: 'Chưa cung cấp danh sách tên miền' },
         { status: 400 }
       );
     }
@@ -40,13 +40,11 @@ export async function POST(req: NextRequest) {
     }
 
     const endpoint = body.endpoint || req.headers.get('x-scarpa-endpoint') || undefined;
-    const mockParam = body.enableMock !== undefined ? body.enableMock : req.headers.get('x-mock-fallback');
-    const enableMock = mockParam !== undefined && mockParam !== null ? (mockParam === true || mockParam === 'true') : undefined;
+    const forceRefresh = body.forceRefresh === true || req.headers.get('x-force-refresh') === 'true';
 
     const scarpaOptions: ScarpaConfigOptions = {
       apiKeys,
       endpoint,
-      enableMock,
     };
 
     // Step 1: Normalize, validate and deduplicate input domains
@@ -63,7 +61,7 @@ export async function POST(req: NextRequest) {
         is_starred: false,
         checked_at: null,
         status: 'error',
-        error: 'Invalid domain',
+        error: 'Tên miền không hợp lệ',
       });
     }
 
@@ -87,12 +85,12 @@ export async function POST(req: NextRequest) {
     } catch (dbErr) {
       console.error('Database query error:', dbErr);
       return NextResponse.json(
-        { success: false, error: 'Unable to load saved data' },
+        { success: false, error: 'Không thể tải dữ liệu từ database' },
         { status: 500 }
       );
     }
 
-    // Step 3: Process domains with strict 30-day cache rule
+    // Step 3: Process domains with strict 30-day cache rule (unless forceRefresh is true)
     let cachedCount = 0;
     let freshCount = 0;
     let errorCount = invalidEntries.length;
@@ -100,8 +98,8 @@ export async function POST(req: NextRequest) {
     for (const domain of validDomains) {
       const existing = existingMap.get(domain);
 
-      // Check if record exists and is < 30 days old
-      if (existing && isCacheValid(existing.checked_at)) {
+      // Check if record exists and is < 30 days old, AND forceRefresh is false
+      if (!forceRefresh && existing && isCacheValid(existing.checked_at)) {
         // HIT CACHE: DO NOT call API!
         results.push({
           domain: existing.domain,
@@ -112,7 +110,7 @@ export async function POST(req: NextRequest) {
         });
         cachedCount++;
       } else {
-        // MISS OR EXPIRED (>= 30 days): Call API with key rotation
+        // MISS, EXPIRED (>= 30 days) OR FORCE REFRESH: Call API with key rotation
         try {
           const apiResult = await fetchScarpaTraffic(domain, scarpaOptions);
 
@@ -123,7 +121,7 @@ export async function POST(req: NextRequest) {
               is_starred: existing ? existing.is_starred : false,
               checked_at: existing ? existing.checked_at : null,
               status: 'error',
-              error: apiResult.error || 'Unable to retrieve traffic',
+              error: apiResult.error || 'Không có dữ liệu Similarweb',
             });
             errorCount++;
           } else {
@@ -146,7 +144,7 @@ export async function POST(req: NextRequest) {
             is_starred: existing ? existing.is_starred : false,
             checked_at: existing ? existing.checked_at : null,
             status: 'error',
-            error: 'Unable to retrieve traffic',
+            error: 'Lỗi trong quá trình gọi API Scrappa',
           });
           errorCount++;
         }
@@ -166,7 +164,7 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     console.error('Fatal error in /api/check:', error);
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      { success: false, error: 'Lỗi hệ thống máy chủ' },
       { status: 500 }
     );
   }

@@ -43,7 +43,7 @@ export default function Home() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [apiKeys, setApiKeys] = useState<string[]>(['', '', '', '', '']);
   const [endpointInput, setEndpointInput] = useState('https://scrappa.co/api/similarweb');
-  const [mockEnabled, setMockEnabled] = useState(true);
+  const [forceRefresh, setForceRefresh] = useState(false);
   const [showKeys, setShowKeys] = useState<boolean[]>([false, false, false, false, false]);
   const [settingsSavedToast, setSettingsSavedToast] = useState(false);
 
@@ -123,11 +123,6 @@ export default function Home() {
       setEndpointInput(savedEndpoint);
     }
 
-    const savedMock = localStorage.getItem('scarpa_mock_enabled');
-    if (savedMock !== null) {
-      setMockEnabled(savedMock === 'true');
-    }
-
     // Check credits for existing keys
     const validKeys = loadedKeys.filter((k) => k.trim().length > 0);
     if (validKeys.length > 0) {
@@ -158,7 +153,6 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           apiKeys: candidateKeys,
-          enableMock: mockEnabled,
         }),
       });
       const data = await res.json();
@@ -241,7 +235,6 @@ export default function Home() {
     localStorage.setItem('scrappa_api_keys', JSON.stringify(cleanedKeys));
     localStorage.setItem('scarpa_api_key', cleanedKeys[0] || '');
     localStorage.setItem('scarpa_api_endpoint', endpointInput.trim());
-    localStorage.setItem('scarpa_mock_enabled', mockEnabled ? 'true' : 'false');
 
     setSettingsSavedToast(true);
     fetchCredits(cleanedKeys);
@@ -278,20 +271,25 @@ export default function Home() {
     const raw = inputText.trim();
     if (!raw) return;
 
+    const validKeys = apiKeys.map((k) => k.trim()).filter(Boolean);
+    if (validKeys.length === 0) {
+      alert('Chưa có Scrappa API Key! Vui lòng vào "⚙️ Cấu hình API" và nhập ít nhất 1 key để lấy dữ liệu thật từ Similarweb.');
+      setIsSettingsOpen(true);
+      return;
+    }
+
     setIsChecking(true);
     setCurrentResults([]);
     setCurrentSummary(null);
 
     const lineCount = raw.split(/[\r\n,;]+/).filter((l) => l.trim()).length;
-    setCheckProgressText(`Đang kiểm tra ${lineCount} domain...`);
-
-    const validKeys = apiKeys.map((k) => k.trim()).filter(Boolean);
+    setCheckProgressText(`Đang kiểm tra ${lineCount} domain từ Similarweb...`);
 
     const payload = {
       domains: raw,
       apiKeys: validKeys,
       endpoint: endpointInput.trim() || 'https://scrappa.co/api/similarweb',
-      enableMock: mockEnabled,
+      forceRefresh,
     };
 
     try {
@@ -581,9 +579,9 @@ export default function Home() {
               <span>Cấu hình API</span>
               <span
                 className={`w-2 h-2 rounded-full ${
-                  activeKeyCount > 0 ? 'bg-emerald-500' : 'bg-amber-400'
+                  activeKeyCount > 0 ? 'bg-emerald-500' : 'bg-rose-500'
                 }`}
-                title={activeKeyCount > 0 ? `${activeKeyCount} API Key sẵn sàng` : 'Chưa có key (Mock mode)'}
+                title={activeKeyCount > 0 ? `${activeKeyCount} API Key sẵn sàng` : 'Chưa cấu hình API key'}
               />
               {activeKeyCount > 0 && (
                 <span className="text-[10px] text-slate-500 font-mono">({activeKeyCount} key)</span>
@@ -612,10 +610,17 @@ export default function Home() {
             disabled={isChecking}
           />
 
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs text-slate-400">
-              Tự động loại bỏ trùng lặp &bull; Tự xoay 5 keys khi hết quota
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <label className="inline-flex items-center gap-1.5 text-xs text-slate-600 select-none cursor-pointer">
+              <input
+                type="checkbox"
+                checked={forceRefresh}
+                onChange={(e) => setForceRefresh(e.target.checked)}
+                disabled={isChecking}
+                className="w-3.5 h-3.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+              <span className="font-medium text-slate-700">Quét lại từ đầu (Bỏ qua cache 30 ngày)</span>
+            </label>
 
             <div className="flex items-center gap-2">
               {inputText.trim() && (
@@ -1154,18 +1159,15 @@ export default function Home() {
                   </span>
                 </div>
 
-                {/* Mock toggle */}
-                <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200">
-                  <div>
-                    <span className="font-semibold text-slate-800 block">Dữ liệu mẫu (Mock Fallback)</span>
-                    <span className="text-[11px] text-slate-500">Tự sinh traffic mẫu khi chưa nhập key hoặc tất cả keys đều hết lượt</span>
+                {/* Cam kết dữ liệu thật 100% */}
+                <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-xs text-blue-900 space-y-1">
+                  <div className="font-semibold flex items-center gap-1.5 text-blue-950">
+                    <span className="inline-block w-2 h-2 rounded-full bg-blue-600"></span>
+                    <span>Cam kết 100% số liệu thực từ Similarweb</span>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={mockEnabled}
-                    onChange={(e) => setMockEnabled(e.target.checked)}
-                    className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
-                  />
+                  <p className="text-[11px] text-blue-800 leading-relaxed">
+                    Hệ thống chỉ trả về số liệu thực lấy từ Scrappa Similarweb API, không bao giờ bịa hay tự sinh số liệu giả. Vui lòng nhập ít nhất 1 key từ <a href="https://scrappa.co" target="_blank" rel="noreferrer" className="font-bold underline hover:text-blue-950">scrappa.co</a> (có thể dùng nhiều tài khoản free để xoay vòng 5 key).
+                  </p>
                 </div>
               </div>
 
