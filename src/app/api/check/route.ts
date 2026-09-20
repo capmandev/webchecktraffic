@@ -4,6 +4,10 @@ import { getRecordsByDomains, upsertRecord } from '@/lib/db';
 import { fetchScarpaTraffic, ScarpaConfigOptions } from '@/lib/scarpa';
 import { DomainCheckResult } from '@/lib/types';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const fetchCache = 'force-no-store';
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();

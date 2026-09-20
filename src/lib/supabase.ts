@@ -25,6 +25,14 @@ export function getSupabaseClient(): SupabaseClient | null {
         persistSession: false,
         autoRefreshToken: false,
       },
+      global: {
+        fetch: (url, options = {}) => {
+          return fetch(url, {
+            ...options,
+            cache: 'no-store',
+          });
+        },
+      },
     });
   }
 
