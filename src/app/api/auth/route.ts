@@ -5,7 +5,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const rawPassword = body.password;
 
-    const expectedPassword = (process.env.SITE_PASSWORD || 'traffic123').trim();
+    const expectedPassword = (process.env.SITE_PASSWORD || '3mteam').trim();
     const inputPassword = typeof rawPassword === 'string' ? rawPassword.trim() : '';
 
     if (!inputPassword || inputPassword !== expectedPassword) {
