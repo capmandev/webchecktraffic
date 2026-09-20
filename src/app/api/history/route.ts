@@ -9,6 +9,11 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       records,
+      debug: {
+        hasUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+        urlPreview: process.env.NEXT_PUBLIC_SUPABASE_URL ? process.env.NEXT_PUBLIC_SUPABASE_URL.substring(0, 30) : null,
+        hasKey: !!(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
+      },
     });
   } catch (error: unknown) {
     console.error('Error fetching history:', error);
