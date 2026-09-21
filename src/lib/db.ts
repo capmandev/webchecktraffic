@@ -129,7 +129,7 @@ export async function getAllRecords(): Promise<TrafficCheckRecord[]> {
     const { data, error } = await supabase
       .from('traffic_checks')
       .select('*')
-      .not('domain', 'like', '__%')
+      .not('domain', 'like', '\\_\\_%')
       .order('checked_at', { ascending: false });
 
     if (error) {
@@ -137,15 +137,17 @@ export async function getAllRecords(): Promise<TrafficCheckRecord[]> {
       return [];
     }
 
-    return (data || []).map((row) => ({
-      id: row.id,
-      domain: row.domain,
-      monthly_traffic: Number(row.monthly_traffic),
-      checked_at: row.checked_at,
-      is_starred: Boolean(row.is_starred),
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    }));
+    return (data || [])
+      .filter((row) => row.domain && !row.domain.startsWith('__'))
+      .map((row) => ({
+        id: row.id,
+        domain: row.domain,
+        monthly_traffic: Number(row.monthly_traffic),
+        checked_at: row.checked_at,
+        is_starred: Boolean(row.is_starred),
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+      }));
   } catch (err) {
     console.error('Exception in Supabase getAllRecords:', err);
     return [];

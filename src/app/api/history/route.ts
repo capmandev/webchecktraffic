@@ -8,10 +8,17 @@ export const fetchCache = 'force-no-store';
 export async function GET() {
   try {
     const records = await getAllRecords();
-    return NextResponse.json({
-      success: true,
-      records,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        records,
+      },
+      {
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        },
+      }
+    );
   } catch (error: unknown) {
     console.error('Error fetching history:', error);
     return NextResponse.json(
