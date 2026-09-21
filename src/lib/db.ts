@@ -129,6 +129,7 @@ export async function getAllRecords(): Promise<TrafficCheckRecord[]> {
     const { data, error } = await supabase
       .from('traffic_checks')
       .select('*')
+      .not('domain', 'like', '__%')
       .order('checked_at', { ascending: false });
 
     if (error) {
@@ -180,7 +181,8 @@ export async function updateStar(domain: string, isStarred: boolean): Promise<bo
  * Delete records by domain name list in Supabase.
  */
 export async function deleteRecords(domains: string[]): Promise<number> {
-  if (domains.length === 0) return 0;
+  const safeDomains = domains.filter((d) => d && !d.startsWith('__'));
+  if (safeDomains.length === 0) return 0;
 
   const supabase = getSupabaseClient();
   if (!supabase) return 0;
@@ -189,7 +191,7 @@ export async function deleteRecords(domains: string[]): Promise<number> {
     const { error, count } = await supabase
       .from('traffic_checks')
       .delete({ count: 'exact' })
-      .in('domain', domains);
+      .in('domain', safeDomains);
 
     if (error) {
       console.error('Supabase deleteRecords error:', error.message);

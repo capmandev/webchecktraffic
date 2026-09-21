@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { parseAndNormalizeBulk, isCacheValid } from '@/lib/normalize';
 import { getRecordsByDomains, upsertRecord } from '@/lib/db';
 import { fetchScarpaTraffic, ScarpaConfigOptions } from '@/lib/scarpa';
+import { getTeamApiKeys } from '@/lib/keys';
 import { DomainCheckResult } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -43,7 +44,21 @@ export async function POST(req: NextRequest) {
       apiKeys.push(singleKey);
     }
 
-    const endpoint = body.endpoint || req.headers.get('x-scarpa-endpoint') || undefined;
+    let endpoint = body.endpoint || req.headers.get('x-scarpa-endpoint') || undefined;
+
+    // If client did not provide keys or passed empty keys, load shared team keys from Supabase
+    if (apiKeys.length === 0) {
+      try {
+        const teamConfig = await getTeamApiKeys();
+        apiKeys = teamConfig.keys.filter((k) => k && k.trim());
+        if (!endpoint && teamConfig.endpoint) {
+          endpoint = teamConfig.endpoint;
+        }
+      } catch (err) {
+        console.error('Error fetching team keys in /api/check:', err);
+      }
+    }
+
     const forceRefresh = body.forceRefresh === true || req.headers.get('x-force-refresh') === 'true';
 
     const scarpaOptions: ScarpaConfigOptions = {

@@ -8,6 +8,8 @@
  * Nếu không có API Key, key hết lượt hoặc domain không có dữ liệu, trả về error rõ ràng.
  */
 
+import { getTeamApiKeys } from './keys';
+
 export interface ScarpaTrafficResult {
   monthlyTraffic: number | null;
   error?: string;
@@ -95,7 +97,21 @@ export async function fetchScarpaTraffic(
     candidateKeys.push(options.apiKey.trim());
   }
 
-  // Fallback to server env variables if no UI keys provided
+  // Fallback to shared team keys from Supabase
+  if (candidateKeys.length === 0) {
+    try {
+      const teamConfig = await getTeamApiKeys();
+      for (const k of teamConfig.keys) {
+        if (k && k.trim() && !candidateKeys.includes(k.trim())) {
+          candidateKeys.push(k.trim());
+        }
+      }
+    } catch (teamErr) {
+      console.error('Failed to load team keys from Supabase in fetchScarpaTraffic:', teamErr);
+    }
+  }
+
+  // Fallback to server env variables if no UI or DB keys provided
   if (candidateKeys.length === 0) {
     const envKeys = process.env.SCARPA_API_KEYS;
     if (envKeys) {

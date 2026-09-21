@@ -27,6 +27,7 @@ import { copyDomainsToClipboard, copyTableToClipboard, exportToExcel } from '@/l
 interface KeyCreditStatus {
   key: string;
   valid: boolean;
+  isExhausted: boolean;
   usable: number;
   freeRemaining: number;
   error?: string;
@@ -39,13 +40,16 @@ export default function Home() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
-  // Settings Modal state - Support up to 5 keys
+  // Settings Modal state - Support up to 10 shared team keys
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [apiKeys, setApiKeys] = useState<string[]>(['', '', '', '', '']);
+  const [apiKeys, setApiKeys] = useState<string[]>(Array(10).fill(''));
   const [endpointInput, setEndpointInput] = useState('https://scrappa.co/api/similarweb');
   const [forceRefresh, setForceRefresh] = useState(false);
-  const [showKeys, setShowKeys] = useState<boolean[]>([false, false, false, false, false]);
+  const [showKeys, setShowKeys] = useState<boolean[]>(Array(10).fill(false));
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [settingsSavedToast, setSettingsSavedToast] = useState(false);
+  const [saveSettingsError, setSaveSettingsError] = useState<string | null>(null);
+  const [isLoadingKeys, setIsLoadingKeys] = useState(false);
 
   // Credit balance states
   const [keyCredits, setKeyCredits] = useState<Record<string, KeyCreditStatus>>({});
@@ -88,32 +92,54 @@ export default function Home() {
   const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Check auth & load saved settings on mount
-  useEffect(() => {
-    const savedAuth = localStorage.getItem('traffic_checker_auth');
-    if (savedAuth === 'true') {
-      setIsAuthenticated(true);
-    } else {
-      setIsAuthenticated(false);
+  // Load team keys from Supabase (shared across all users)
+  const loadSharedTeamKeys = async () => {
+    setIsLoadingKeys(true);
+    try {
+      const res = await fetch('/api/keys', { cache: 'no-store' });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.keys)) {
+        const fullKeys = Array(10).fill('');
+        data.keys.forEach((k: string, idx: number) => {
+          if (idx < 10 && typeof k === 'string') {
+            fullKeys[idx] = k.trim();
+          }
+        });
+        setApiKeys(fullKeys);
+        if (data.endpoint) {
+          setEndpointInput(data.endpoint);
+        }
+        localStorage.setItem('scrappa_api_keys', JSON.stringify(fullKeys));
+
+        const active = fullKeys.filter((k) => k.length > 0);
+        if (active.length > 0) {
+          fetchCredits(active);
+        }
+        return;
+      }
+    } catch (err) {
+      console.warn('Cannot fetch /api/keys, fallback to localStorage', err);
+    } finally {
+      setIsLoadingKeys(false);
     }
 
-    // Load multi-keys settings
-    let loadedKeys = ['', '', '', '', ''];
+    // Fallback to local storage if API call fails
+    let loadedKeys = Array(10).fill('');
     const savedKeysRaw = localStorage.getItem('scrappa_api_keys');
     if (savedKeysRaw) {
       try {
         const parsed = JSON.parse(savedKeysRaw);
         if (Array.isArray(parsed)) {
-          loadedKeys = [...parsed, '', '', '', '', ''].slice(0, 5);
+          loadedKeys = [...parsed, ...Array(10).fill('')].slice(0, 10);
         }
       } catch {
         const legacyKey = localStorage.getItem('scarpa_api_key') || '';
-        loadedKeys = [legacyKey, '', '', '', ''];
+        loadedKeys[0] = legacyKey;
       }
     } else {
       const legacyKey = localStorage.getItem('scarpa_api_key') || '';
       if (legacyKey) {
-        loadedKeys = [legacyKey, '', '', '', ''];
+        loadedKeys[0] = legacyKey;
       }
     }
     setApiKeys(loadedKeys);
@@ -123,11 +149,28 @@ export default function Home() {
       setEndpointInput(savedEndpoint);
     }
 
-    // Check credits for existing keys
     const validKeys = loadedKeys.filter((k) => k.trim().length > 0);
     if (validKeys.length > 0) {
       fetchCredits(validKeys);
     }
+  };
+
+  // Check auth & load saved settings on mount
+  useEffect(() => {
+    const savedAuth = localStorage.getItem('traffic_checker_auth');
+    if (savedAuth === 'true') {
+      setIsAuthenticated(true);
+    } else {
+      setIsAuthenticated(false);
+    }
+
+    const savedEndpoint = localStorage.getItem('scarpa_api_endpoint');
+    if (savedEndpoint) {
+      setEndpointInput(savedEndpoint);
+    }
+
+    // Load team keys from Supabase
+    loadSharedTeamKeys();
   }, []);
 
   // Fetch history when authenticated
@@ -137,7 +180,7 @@ export default function Home() {
     }
   }, [isAuthenticated]);
 
-  // Check credits for keys
+  // Check credits for keys (real-time free quota check)
   const fetchCredits = async (keysToCheck?: string[]) => {
     const candidateKeys = (keysToCheck || apiKeys).map((k) => k.trim()).filter(Boolean);
     if (candidateKeys.length === 0) {
@@ -161,9 +204,10 @@ export default function Home() {
         data.results.forEach((item: any) => {
           map[item.key] = {
             key: item.key,
-            valid: item.valid,
-            usable: item.usable,
-            freeRemaining: item.freeRemaining,
+            valid: Boolean(item.valid),
+            isExhausted: Boolean(item.isExhausted || item.usable <= 0),
+            usable: Number(item.usable || 0),
+            freeRemaining: Number(item.freeRemaining || 0),
             error: item.error,
           };
         });
@@ -229,23 +273,63 @@ export default function Home() {
     });
   };
 
-  // Save Settings
-  const handleSaveSettings = () => {
+  // Save Settings directly to Supabase for the entire team
+  const handleSaveSettings = async () => {
+    setIsSavingSettings(true);
+    setSaveSettingsError(null);
     const cleanedKeys = apiKeys.map((k) => k.trim());
-    localStorage.setItem('scrappa_api_keys', JSON.stringify(cleanedKeys));
-    localStorage.setItem('scarpa_api_key', cleanedKeys[0] || '');
-    localStorage.setItem('scarpa_api_endpoint', endpointInput.trim());
 
-    setSettingsSavedToast(true);
-    fetchCredits(cleanedKeys);
+    try {
+      const res = await fetch('/api/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          keys: cleanedKeys,
+          endpoint: endpointInput.trim(),
+        }),
+      });
 
-    setTimeout(() => {
-      setSettingsSavedToast(false);
-      setIsSettingsOpen(false);
-    }, 600);
+      const data = await res.json();
+      if (data.success) {
+        localStorage.setItem('scrappa_api_keys', JSON.stringify(cleanedKeys));
+        localStorage.setItem('scarpa_api_key', cleanedKeys[0] || '');
+        localStorage.setItem('scarpa_api_endpoint', endpointInput.trim());
+
+        setSettingsSavedToast(true);
+        const active = cleanedKeys.filter((k) => k.length > 0);
+        if (active.length > 0) {
+          fetchCredits(active);
+        }
+
+        setTimeout(() => {
+          setSettingsSavedToast(false);
+          setIsSettingsOpen(false);
+        }, 1000);
+      } else {
+        setSaveSettingsError(data.error || 'Lỗi khi lưu keys vào database');
+      }
+    } catch (err) {
+      setSaveSettingsError('Không thể kết nối đến máy chủ để lưu keys');
+    } finally {
+      setIsSavingSettings(false);
+    }
   };
 
   const activeKeyCount = apiKeys.filter((k) => k.trim().length > 0).length;
+
+  const exhaustedKeysCount = useMemo(() => {
+    let count = 0;
+    for (const key of apiKeys) {
+      const trimmed = key.trim();
+      if (trimmed && keyCredits[trimmed]) {
+        const status = keyCredits[trimmed];
+        if (!status.valid || status.isExhausted || status.usable <= 0) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }, [apiKeys, keyCredits]);
 
   // Fetch history from DB
   const fetchHistory = async () => {
@@ -273,7 +357,13 @@ export default function Home() {
 
     const validKeys = apiKeys.map((k) => k.trim()).filter(Boolean);
     if (validKeys.length === 0) {
-      alert('Chưa có Scrappa API Key! Vui lòng vào "⚙️ Cấu hình API" và nhập ít nhất 1 key để lấy dữ liệu thật từ Similarweb.');
+      alert('Chưa có Scrappa API Key! Vui lòng vào "⚙️ Cấu hình API" để nhập key dùng chung cho cả team.');
+      setIsSettingsOpen(true);
+      return;
+    }
+
+    if (totalCredits !== null && totalCredits <= 0) {
+      alert('Tất cả API keys hiện tại đều đã hết lượt (0 credits)! Vui lòng vào "⚙️ Cấu hình API" để thay key mới từ scrappa.co.');
       setIsSettingsOpen(true);
       return;
     }
@@ -559,11 +649,27 @@ export default function Home() {
                 <Zap className={`w-3.5 h-3.5 fill-current text-emerald-600 ${isCheckingCredits ? 'animate-spin' : ''}`} />
                 <span>
                   {isCheckingCredits
-                    ? 'Đang kiểm tra...'
+                    ? 'Đang check...'
                     : totalCredits !== null
                     ? `${totalCredits.toLocaleString('en-US')} Credits`
                     : 'Check credits'}
                 </span>
+              </button>
+            )}
+
+            {/* Warning badge if any key is exhausted */}
+            {exhaustedKeysCount > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSettingsOpen(true);
+                  fetchCredits();
+                }}
+                title={`${exhaustedKeysCount} key đã hết lượt credits (0 credits). Bấm để thay key mới ngay!`}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-100 border border-rose-300 text-rose-800 text-xs font-bold hover:bg-rose-200 transition-colors animate-pulse shadow-2xs"
+              >
+                <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                <span>{exhaustedKeysCount} key hết lượt</span>
               </button>
             )}
 
@@ -579,13 +685,21 @@ export default function Home() {
               <span>Cấu hình API</span>
               <span
                 className={`w-2 h-2 rounded-full ${
-                  activeKeyCount > 0 ? 'bg-emerald-500' : 'bg-rose-500'
+                  exhaustedKeysCount > 0
+                    ? 'bg-amber-500'
+                    : activeKeyCount > 0
+                    ? 'bg-emerald-500'
+                    : 'bg-rose-500'
                 }`}
-                title={activeKeyCount > 0 ? `${activeKeyCount} API Key sẵn sàng` : 'Chưa cấu hình API key'}
+                title={
+                  exhaustedKeysCount > 0
+                    ? `Có ${exhaustedKeysCount} key hết lượt`
+                    : activeKeyCount > 0
+                    ? `${activeKeyCount} API Key sẵn sàng`
+                    : 'Chưa cấu hình API key'
+                }
               />
-              {activeKeyCount > 0 && (
-                <span className="text-[10px] text-slate-500 font-mono">({activeKeyCount} key)</span>
-              )}
+              <span className="text-[10px] text-slate-500 font-mono">({activeKeyCount}/10 key)</span>
             </button>
 
             <button
@@ -1032,114 +1146,176 @@ export default function Home() {
         </div>
 
         {/* ========================================================================= */}
-        {/* MODAL CẤU HÌNH API 5 KEYS VÀ HIỂN THỊ CREDITS TỰ ĐỘNG */}
+        {/* MODAL CẤU HÌNH API 10 KEYS DÙNG CHUNG CẢ TEAM VÀ HIỂN THỊ CREDITS TỰ ĐỘNG */}
         {/* ========================================================================= */}
         {isSettingsOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
-            <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-6 max-w-lg w-full space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-6 max-w-xl w-full space-y-4 max-h-[92vh] overflow-y-auto">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
-                    <Key className="w-4 h-4" />
+                  <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shadow-xs">
+                    <Key className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-slate-900">Cấu hình Scrappa API (5 Keys)</h3>
-                    <p className="text-[11px] text-slate-500">Tự động kiểm tra số dư credits không mất phí</p>
+                    <h3 className="text-sm font-bold text-slate-900">Cấu hình 10 Scrappa API Keys (Dùng chung cả Team)</h3>
+                    <p className="text-[11px] text-slate-500">Ai cũng có thể điền & thay key. Dữ liệu tự động đồng bộ qua Supabase.</p>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsSettingsOpen(false)}
-                  className="p-1 text-slate-400 hover:text-slate-600 rounded-md"
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded-md transition-colors"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
-              {/* Total credits banner */}
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
-                <div>
-                  <span className="text-[11px] text-slate-500 font-medium block">Tổng credits khả dụng:</span>
-                  <span className="text-base font-extrabold text-emerald-600">
-                    {totalCredits !== null ? `${totalCredits.toLocaleString('en-US')} Credits` : '—'}
-                  </span>
+              {/* Total credits and status banner */}
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] text-slate-500 font-medium block">Tổng credits khả dụng cả team:</span>
+                    <span className="text-lg font-black text-emerald-600">
+                      {totalCredits !== null ? `${totalCredits.toLocaleString('en-US')} Credits` : '—'}
+                    </span>
+                    <span className="text-[10px] text-slate-500 block">
+                      {activeKeyCount > 0
+                        ? `${activeKeyCount - exhaustedKeysCount}/${activeKeyCount} key khả dụng (${activeKeyCount}/10 slot)`
+                        : 'Chưa có key nào'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => fetchCredits()}
+                    disabled={isCheckingCredits}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-xs font-semibold text-slate-700 transition-colors shadow-2xs"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isCheckingCredits ? 'animate-spin text-blue-600' : ''}`} />
+                    <span>Check số dư</span>
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => fetchCredits()}
-                  disabled={isCheckingCredits}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 transition-colors"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isCheckingCredits ? 'animate-spin' : ''}`} />
-                  <span>Check số dư</span>
-                </button>
+
+                {/* Key exhaustion warning banner */}
+                {exhaustedKeysCount > 0 && (
+                  <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800 font-medium flex items-center gap-2 animate-pulse">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>
+                      <strong>Phát hiện {exhaustedKeysCount} key đã hết lượt (0 credits)!</strong> Vui lòng dán key mới vào các ô đỏ bên dưới để tiếp tục kiểm tra traffic.
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-3 text-xs">
-                {/* 5 API Keys slots */}
+                {/* 10 API Keys slots */}
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <label className="font-semibold text-slate-700">
-                      Danh sách 5 API Keys (Free Tier)
+                    <label className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <span>Danh sách 10 API Keys (Free Tier Scrappa)</span>
+                      <span className="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-mono font-normal">
+                        Tối đa 10 key
+                      </span>
                     </label>
-                    <span className="text-[10px] text-slate-400">Tự xoay khi hết credits</span>
+                    <span className="text-[10px] text-slate-500 font-medium">Tự động xoay sang key kế tiếp khi hết lượt</span>
                   </div>
 
-                  {apiKeys.map((keyVal, idx) => {
-                    const trimmed = keyVal.trim();
-                    const status = trimmed ? keyCredits[trimmed] : null;
+                  <div className="space-y-2">
+                    {apiKeys.map((keyVal, idx) => {
+                      const trimmed = keyVal.trim();
+                      const status = trimmed ? keyCredits[trimmed] : null;
+                      const isDead = status && (!status.valid || status.isExhausted || status.usable <= 0);
 
-                    return (
-                      <div key={idx} className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="w-12 text-[11px] font-mono text-slate-500">Key #{idx + 1}:</span>
-                          <div className="relative flex-1">
-                            <input
-                              type={showKeys[idx] ? 'text' : 'password'}
-                              value={keyVal}
-                              onChange={(e) => handleKeyChange(idx, e.target.value)}
-                              placeholder={`Dán Scrappa API Key ${idx + 1}...`}
-                              className="w-full rounded-lg border border-slate-300 pl-3 pr-8 py-1.5 font-mono text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => toggleShowKey(idx)}
-                              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                            >
-                              {showKeys[idx] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Credits balance badge under key */}
-                        {trimmed && (
-                          <div className="pl-14 text-[10px] flex items-center gap-1.5">
-                            {status ? (
-                              status.valid ? (
-                                <span
-                                  className={`px-2 py-0.5 rounded font-semibold ${
-                                    status.usable > 0
-                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                      : 'bg-red-50 text-red-700 border border-red-200'
-                                  }`}
+                      return (
+                        <div
+                          key={idx}
+                          className={`p-2 rounded-xl border transition-all ${
+                            isDead
+                              ? 'border-rose-300 bg-rose-50/40'
+                              : trimmed && status?.valid && status.usable > 0
+                              ? 'border-emerald-200 bg-emerald-50/20'
+                              : 'border-slate-200 bg-white'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className={`w-14 text-[11px] font-mono font-semibold ${isDead ? 'text-rose-700' : 'text-slate-600'}`}>
+                              Key #{idx + 1}:
+                            </span>
+                            <div className="relative flex-1">
+                              <input
+                                type={showKeys[idx] ? 'text' : 'password'}
+                                value={keyVal}
+                                onChange={(e) => handleKeyChange(idx, e.target.value)}
+                                placeholder={`Dán Scrappa API Key slot ${idx + 1}...`}
+                                className={`w-full rounded-lg border pl-3 pr-16 py-1.5 font-mono text-xs text-slate-900 focus:outline-none transition-colors ${
+                                  isDead
+                                    ? 'border-rose-400 bg-white focus:ring-2 focus:ring-rose-400'
+                                    : 'border-slate-300 bg-white focus:ring-1 focus:ring-blue-500'
+                                }`}
+                              />
+                              <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                                {trimmed && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleKeyChange(idx, '')}
+                                    title="Xóa key này để thay key mới"
+                                    className="p-1 text-slate-400 hover:text-red-600 transition-colors"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => toggleShowKey(idx)}
+                                  className="p-1 text-slate-400 hover:text-slate-600 transition-colors"
                                 >
-                                  {status.usable > 0
-                                    ? `✓ Còn ${status.usable.toLocaleString('en-US')} credits`
-                                    : '⚠ 0 credits (Hết lượt)'}
-                                </span>
+                                  {showKeys[idx] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Credits balance badge under key */}
+                          <div className="pl-16 pt-1 text-[10px] flex items-center justify-between">
+                            {trimmed ? (
+                              status ? (
+                                status.valid ? (
+                                  status.usable > 0 ? (
+                                    <span className="px-2 py-0.5 rounded font-bold text-emerald-700 bg-emerald-100/70 border border-emerald-300 inline-flex items-center gap-1">
+                                      ✓ Còn {status.usable.toLocaleString('en-US')} credits
+                                      {status.freeRemaining > 0 && (
+                                        <span className="font-normal text-emerald-600">({status.freeRemaining} free)</span>
+                                      )}
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded font-extrabold text-rose-700 bg-rose-100 border border-rose-300 inline-flex items-center gap-1">
+                                      <AlertCircle className="w-3 h-3 text-rose-600" />
+                                      ⚠ 0 credits (HẾT LƯỢT — CẦN THAY KEY MỚI)
+                                    </span>
+                                  )
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded font-bold text-red-700 bg-red-100 border border-red-300 inline-flex items-center gap-1">
+                                    ✕ {status.error || 'Key không hợp lệ hoặc đã bị thu hồi'}
+                                  </span>
+                                )
+                              ) : isCheckingCredits ? (
+                                <span className="text-slate-400 italic">Đang kiểm tra số dư...</span>
                               ) : (
-                                <span className="px-2 py-0.5 rounded bg-red-50 text-red-600 border border-red-200 font-semibold">
-                                  ✕ {status.error || 'Key không hợp lệ'}
-                                </span>
+                                <span className="text-slate-400">Chưa kiểm tra số dư</span>
                               )
                             ) : (
-                              <span className="text-slate-400">Chưa kiểm tra số dư</span>
+                              <span className="text-slate-400 italic">Slot trống — Chưa điền key</span>
+                            )}
+
+                            {isDead && (
+                              <span className="text-rose-600 font-semibold text-[10px]">
+                                Cần thay thế
+                              </span>
                             )}
                           </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {/* API Endpoint */}
@@ -1163,18 +1339,25 @@ export default function Home() {
                 <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-xs text-blue-900 space-y-1">
                   <div className="font-semibold flex items-center gap-1.5 text-blue-950">
                     <span className="inline-block w-2 h-2 rounded-full bg-blue-600"></span>
-                    <span>Cam kết 100% số liệu thực từ Similarweb</span>
+                    <span>Cam kết 100% số liệu thực từ Similarweb (Tuyệt đối không bịa số)</span>
                   </div>
                   <p className="text-[11px] text-blue-800 leading-relaxed">
-                    Hệ thống chỉ trả về số liệu thực lấy từ Scrappa Similarweb API, không bao giờ bịa hay tự sinh số liệu giả. Vui lòng nhập ít nhất 1 key từ <a href="https://scrappa.co" target="_blank" rel="noreferrer" className="font-bold underline hover:text-blue-950">scrappa.co</a> (có thể dùng nhiều tài khoản free để xoay vòng 5 key).
+                    Hệ thống chỉ trả về số liệu thực lấy từ Scrappa Similarweb API. Mỗi tài khoản miễn phí tại <a href="https://scrappa.co" target="_blank" rel="noreferrer" className="font-bold underline hover:text-blue-950">scrappa.co</a> có 50 credits/tháng. Bất kỳ thành viên nào trong team đều có thể tạo tài khoản và điền key vào 10 ô trên để dùng chung cho cả nhóm.
                   </p>
                 </div>
               </div>
 
               {settingsSavedToast && (
-                <div className="p-2 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-semibold flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5" />
-                  <span>Đã lưu cấu hình và cập nhật số dư!</span>
+                <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-2 animate-bounce">
+                  <Check className="w-4 h-4 text-emerald-600" />
+                  <span>Đã lưu 10 API keys dùng chung thành công! Đồng bộ cho cả team.</span>
+                </div>
+              )}
+
+              {saveSettingsError && (
+                <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-red-800 text-xs font-semibold flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-600" />
+                  <span>{saveSettingsError}</span>
                 </div>
               )}
 
@@ -1182,16 +1365,25 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setIsSettingsOpen(false)}
-                  className="flex-1 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  disabled={isSavingSettings}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
                 >
                   Đóng
                 </button>
                 <button
                   type="button"
                   onClick={handleSaveSettings}
-                  className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold"
+                  disabled={isSavingSettings}
+                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-xs font-bold transition-colors shadow-xs flex items-center justify-center gap-2"
                 >
-                  Lưu cấu hình
+                  {isSavingSettings ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Đang lưu lên Supabase...</span>
+                    </>
+                  ) : (
+                    <span>Lưu cấu hình (Đồng bộ cả Team)</span>
+                  )}
                 </button>
               </div>
             </div>
