@@ -21,6 +21,9 @@ import {
   Zap,
   ExternalLink,
   BookOpen,
+  ChevronDown,
+  ChevronUp,
+  Share2,
 } from 'lucide-react';
 import { TrafficCheckRecord, DomainCheckResult } from '@/lib/types';
 import { copyDomainsToClipboard, copyTableToClipboard, exportToExcel } from '@/lib/export';
@@ -52,6 +55,7 @@ export default function Home() {
   const [saveSettingsError, setSaveSettingsError] = useState<string | null>(null);
   const [isLoadingKeys, setIsLoadingKeys] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
+  const [isInlineGuideExpanded, setIsInlineGuideExpanded] = useState(false);
 
   // Credit balance states
   const [keyCredits, setKeyCredits] = useState<Record<string, KeyCreditStatus>>({});
@@ -723,6 +727,122 @@ export default function Home() {
             </button>
           </div>
         </header>
+
+        {/* Neat inline collapsible guide banner */}
+        <div className="rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50/70 via-white to-blue-50/40 p-3 shadow-2xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => setIsInlineGuideExpanded((prev) => !prev)}
+              className="flex items-center gap-2 text-left group"
+            >
+              <div className="w-6 h-6 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-2xs group-hover:bg-blue-700 transition-colors">
+                <BookOpen className="w-3.5 h-3.5" />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-800 group-hover:text-blue-600 transition-colors">
+                  Hướng dẫn nhanh: Đăng ký & Lấy Scrappa API Key (3 bước)
+                </span>
+                <span className="hidden sm:inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                  50 credits free/key
+                </span>
+              </div>
+              {isInlineGuideExpanded ? (
+                <ChevronUp className="w-4 h-4 text-slate-400 group-hover:text-blue-600" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-slate-400 group-hover:text-blue-600" />
+              )}
+            </button>
+
+            <div className="flex items-center gap-1.5 ml-auto">
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof window !== 'undefined') {
+                    const url = `${window.location.origin}/guide`;
+                    navigator.clipboard.writeText(url);
+                    setCopyFeedback('Đã copy link hướng dẫn (/guide)');
+                    setTimeout(() => setCopyFeedback(null), 2500);
+                  }
+                }}
+                title="Copy đường link trang hướng dẫn đầy đủ để gửi cho đồng đội"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-[11px] font-semibold text-slate-700 transition-colors shadow-2xs"
+              >
+                <Share2 className="w-3 h-3 text-blue-600" />
+                <span>Chia sẻ link</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsGuideOpen(true)}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold transition-colors shadow-2xs"
+              >
+                <span>Xem chi tiết</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Expanded inline content */}
+          {isInlineGuideExpanded && (
+            <div className="mt-3 pt-3 border-t border-blue-100 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs animate-in fade-in duration-200">
+              <div className="p-3 rounded-lg bg-white border border-slate-200 space-y-1.5 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                    <span className="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-bold">1</span>
+                    Đăng ký tài khoản
+                  </span>
+                  <a
+                    href="https://scrappa.co/register"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[11px] text-blue-600 font-bold hover:underline inline-flex items-center gap-0.5"
+                  >
+                    <span>Mở link</span>
+                    <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Vào <strong>scrappa.co/register</strong> điền tên, email và mật khẩu. Nhận ngay <strong>50 credits free/tháng</strong> không cần thẻ tín dụng.
+                </p>
+                <img
+                  src="/images/guide-step1-register.jpg"
+                  alt="Đăng ký"
+                  className="rounded border border-slate-200 w-full h-24 object-cover mt-1"
+                />
+              </div>
+
+              <div className="p-3 rounded-lg bg-white border border-slate-200 space-y-1.5 shadow-2xs">
+                <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                  <span className="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-bold">2</span>
+                  Lấy API Key
+                </span>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Ở menu bên trái, vào mục <strong>API Keys</strong>. Tại thẻ <strong>Your API Key</strong>, bấm nút <strong>Copy Key</strong>.
+                </p>
+                <img
+                  src="/images/guide-step2-copy-key.jpg"
+                  alt="Copy Key"
+                  className="rounded border border-slate-200 w-full h-24 object-cover mt-1"
+                />
+              </div>
+
+              <div className="p-3 rounded-lg bg-white border border-slate-200 space-y-1.5 shadow-2xs">
+                <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                  <span className="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-bold">3</span>
+                  Dán vào app & Lưu
+                </span>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Bấm nút <strong>⚙️ Cấu hình API</strong> trên web, dán key vào slot trống hoặc ô báo đỏ, rồi bấm <strong>Lưu cấu hình (Đồng bộ cả Team)</strong>.
+                </p>
+                <img
+                  src="/images/guide-step3-paste-app.jpg"
+                  alt="Dán Key"
+                  className="rounded border border-slate-200 w-full h-24 object-cover mt-1"
+                />
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Input Card */}
         <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-4 space-y-3">
@@ -1513,13 +1633,41 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-end pt-2 border-t border-slate-100">
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (typeof window !== 'undefined') {
+                        const url = `${window.location.origin}/guide`;
+                        navigator.clipboard.writeText(url);
+                        setCopyFeedback('Đã copy link hướng dẫn (/guide)');
+                        setTimeout(() => setCopyFeedback(null), 2500);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 transition-colors shadow-2xs"
+                  >
+                    <Share2 className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Copy link chia sẻ cho Team</span>
+                  </button>
+
+                  <a
+                    href="/guide"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-blue-600 hover:text-blue-800 hover:bg-blue-50 text-xs font-semibold transition-colors"
+                  >
+                    <span>Mở trang riêng</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+
                 <button
                   type="button"
                   onClick={() => setIsGuideOpen(false)}
-                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-colors shadow-xs"
+                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-colors shadow-xs"
                 >
-                  Đã hiểu, đóng hướng dẫn
+                  Đã hiểu, đóng lại
                 </button>
               </div>
             </div>
