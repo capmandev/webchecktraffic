@@ -30,6 +30,9 @@ import {
   ArrowLeft,
   Calendar,
   Clock,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import { TrafficCheckRecord, DomainCheckResult } from '@/lib/types';
 import { copyDomainsToClipboard, copyTableToClipboard, exportToExcel } from '@/lib/export';
@@ -128,6 +131,11 @@ export default function Home() {
   // Delete session modal state
   const [sessionToDelete, setSessionToDelete] = useState<ScanSession | null>(null);
   const [isDeletingSession, setIsDeletingSession] = useState(false);
+
+  // Traffic column sorting states ('desc': lớn -> bé, 'asc': bé -> lớn, null: mặc định)
+  const [currentSortOrder, setCurrentSortOrder] = useState<'desc' | 'asc' | null>(null);
+  const [historySortOrder, setHistorySortOrder] = useState<'desc' | 'asc' | null>(null);
+  const [sessionSortOrder, setSessionSortOrder] = useState<'desc' | 'asc' | null>(null);
 
   // Load team keys from Supabase (shared across all users)
   const loadSharedTeamKeys = async () => {
@@ -719,6 +727,46 @@ export default function Home() {
     return viewingSession.items.filter((it) => it.domain.toLowerCase().includes(query));
   }, [viewingSession, sessionDetailSearch]);
 
+  // Helper to cycle sort order: null (mặc định) -> 'desc' (lớn -> bé) -> 'asc' (bé -> lớn) -> null
+  const getNextSortOrder = (current: 'desc' | 'asc' | null): 'desc' | 'asc' | null => {
+    if (current === null) return 'desc';
+    if (current === 'desc') return 'asc';
+    return null;
+  };
+
+  // Helper to sort items by monthly traffic (desc: lớn -> bé, asc: bé -> lớn, null: nguyên bản)
+  const sortItemsByTraffic = <T extends { domain: string; monthly_traffic: number | null | undefined }>(
+    items: T[],
+    order: 'desc' | 'asc' | null
+  ): T[] => {
+    if (!order) return items;
+    return [...items].sort((a, b) => {
+      const valA = typeof a.monthly_traffic === 'number' && !isNaN(a.monthly_traffic) ? a.monthly_traffic : -1;
+      const valB = typeof b.monthly_traffic === 'number' && !isNaN(b.monthly_traffic) ? b.monthly_traffic : -1;
+
+      // Keep invalid / error rows at the bottom
+      if (valA < 0 && valB < 0) return a.domain.localeCompare(b.domain);
+      if (valA < 0) return 1;
+      if (valB < 0) return -1;
+
+      if (valA === valB) return a.domain.localeCompare(b.domain);
+      return order === 'desc' ? valB - valA : valA - valB;
+    });
+  };
+
+  // Sorted views for current results, history, and session details
+  const sortedCurrentResults = useMemo(() => {
+    return sortItemsByTraffic(currentResults, currentSortOrder);
+  }, [currentResults, currentSortOrder]);
+
+  const sortedFilteredHistory = useMemo(() => {
+    return sortItemsByTraffic(filteredHistory, historySortOrder);
+  }, [filteredHistory, historySortOrder]);
+
+  const sortedSessionItems = useMemo(() => {
+    return sortItemsByTraffic(filteredSessionItems, sessionSortOrder);
+  }, [filteredSessionItems, sessionSortOrder]);
+
   const isAllFilteredSelected =
     filteredHistory.length > 0 &&
     filteredHistory.every((item) => selectedDomains.has(item.domain));
@@ -1162,7 +1210,7 @@ export default function Home() {
 
                 <button
                   type="button"
-                  onClick={() => handleCopyDomains(currentResults.map((r) => r.domain))}
+                  onClick={() => handleCopyDomains(sortedCurrentResults.map((r) => r.domain))}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-medium"
                   title="Copy danh sách domain (1 domain/dòng)"
                 >
@@ -1172,7 +1220,7 @@ export default function Home() {
 
                 <button
                   type="button"
-                  onClick={() => handleCopyTable(currentResults)}
+                  onClick={() => handleCopyTable(sortedCurrentResults)}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-medium"
                   title="Copy bảng số nguyên thuần túy (paste trực tiếp vào Excel/Sheets)"
                 >
@@ -1182,7 +1230,7 @@ export default function Home() {
 
                 <button
                   type="button"
-                  onClick={() => handleExportExcel(currentResults, `traffic_check_${Date.now()}.xlsx`)}
+                  onClick={() => handleExportExcel(sortedCurrentResults, `traffic_check_${Date.now()}.xlsx`)}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
                   title="Tải file Excel .xlsx"
                 >
@@ -1198,11 +1246,38 @@ export default function Home() {
                   <tr className="bg-slate-100 text-slate-600 font-bold uppercase border-b border-slate-200">
                     <th className="py-2.5 px-3 w-10 text-center">⭐</th>
                     <th className="py-2.5 px-3">DOMAIN</th>
-                    <th className="py-2.5 px-4 text-right">MONTHLY TRAFFIC</th>
+                    <th
+                      onClick={() => setCurrentSortOrder(getNextSortOrder(currentSortOrder))}
+                      className="py-2.5 px-4 text-right cursor-pointer select-none group hover:bg-slate-200/70 transition-colors"
+                      title={
+                        currentSortOrder === 'desc'
+                          ? 'Đang xếp: Lớn → Bé (Bấm để xếp Bé → Lớn)'
+                          : currentSortOrder === 'asc'
+                          ? 'Đang xếp: Bé → Lớn (Bấm để về mặc định)'
+                          : 'Bấm để sắp xếp theo traffic (Lớn → Bé)'
+                      }
+                    >
+                      <div className="inline-flex items-center justify-end gap-1.5 font-bold text-slate-600 group-hover:text-blue-600">
+                        <span>MONTHLY TRAFFIC</span>
+                        {currentSortOrder === 'desc' ? (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-extrabold shadow-2xs">
+                            <span>Lớn → Bé</span>
+                            <ArrowDown className="w-3 h-3 text-blue-600 stroke-[2.5]" />
+                          </span>
+                        ) : currentSortOrder === 'asc' ? (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-extrabold shadow-2xs">
+                            <span>Bé → Lớn</span>
+                            <ArrowUp className="w-3 h-3 text-blue-600 stroke-[2.5]" />
+                          </span>
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-slate-400 group-hover:text-blue-600 opacity-60 group-hover:opacity-100 transition-opacity" />
+                        )}
+                      </div>
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {currentResults.map((row, idx) => (
+                  {sortedCurrentResults.map((row, idx) => (
                     <tr key={idx} className="hover:bg-slate-50">
                       <td className="py-2 px-3 text-center">
                         {row.status !== 'error' ? (
@@ -1324,19 +1399,19 @@ export default function Home() {
                 <div className="flex items-center gap-1.5 text-xs">
                   <button
                     type="button"
-                    onClick={() => handleCopyDomains(filteredHistory.map((r) => r.domain))}
-                    disabled={filteredHistory.length === 0}
+                    onClick={() => handleCopyDomains(sortedFilteredHistory.map((r) => r.domain))}
+                    disabled={sortedFilteredHistory.length === 0}
                     className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 text-slate-700 font-medium"
                     title="Copy tất cả domain đang lọc"
                   >
                     <Copy className="w-3 h-3 text-slate-500" />
-                    <span>Copy domain ({filteredHistory.length})</span>
+                    <span>Copy domain ({sortedFilteredHistory.length})</span>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => handleCopyTable(filteredHistory)}
-                    disabled={filteredHistory.length === 0}
+                    onClick={() => handleCopyTable(sortedFilteredHistory)}
+                    disabled={sortedFilteredHistory.length === 0}
                     className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 text-slate-700 font-medium"
                     title="Copy bảng số nguyên thuần túy"
                   >
@@ -1346,8 +1421,8 @@ export default function Home() {
 
                   <button
                     type="button"
-                    onClick={() => handleExportExcel(filteredHistory, `traffic_history_${Date.now()}.xlsx`)}
-                    disabled={filteredHistory.length === 0}
+                    onClick={() => handleExportExcel(sortedFilteredHistory, `traffic_history_${Date.now()}.xlsx`)}
+                    disabled={sortedFilteredHistory.length === 0}
                     className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-medium"
                     title="Tải file Excel .xlsx"
                   >
@@ -1484,12 +1559,39 @@ export default function Home() {
                         <th className="py-2.5 px-3 w-8 text-center"></th>
                         <th className="py-2.5 px-3 w-8 text-center">⭐</th>
                         <th className="py-2.5 px-3">DOMAIN</th>
-                        <th className="py-2.5 px-4 text-right">MONTHLY TRAFFIC</th>
+                        <th
+                          onClick={() => setHistorySortOrder(getNextSortOrder(historySortOrder))}
+                          className="py-2.5 px-4 text-right cursor-pointer select-none group hover:bg-slate-200/70 transition-colors"
+                          title={
+                            historySortOrder === 'desc'
+                              ? 'Đang xếp: Lớn → Bé (Bấm để xếp Bé → Lớn)'
+                              : historySortOrder === 'asc'
+                              ? 'Đang xếp: Bé → Lớn (Bấm để về mặc định)'
+                              : 'Bấm để sắp xếp theo traffic (Lớn → Bé)'
+                          }
+                        >
+                          <div className="inline-flex items-center justify-end gap-1.5 font-bold text-slate-600 group-hover:text-blue-600">
+                            <span>MONTHLY TRAFFIC</span>
+                            {historySortOrder === 'desc' ? (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-extrabold shadow-2xs">
+                                <span>Lớn → Bé</span>
+                                <ArrowDown className="w-3 h-3 text-blue-600 stroke-[2.5]" />
+                              </span>
+                            ) : historySortOrder === 'asc' ? (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-extrabold shadow-2xs">
+                                <span>Bé → Lớn</span>
+                                <ArrowUp className="w-3 h-3 text-blue-600 stroke-[2.5]" />
+                              </span>
+                            ) : (
+                              <ArrowUpDown className="w-3 h-3 text-slate-400 group-hover:text-blue-600 opacity-60 group-hover:opacity-100 transition-opacity" />
+                            )}
+                          </div>
+                        </th>
                         <th className="py-2.5 px-3 w-12 text-center"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {filteredHistory.map((row) => {
+                      {sortedFilteredHistory.map((row) => {
                         const isSelected = selectedDomains.has(row.domain);
                         return (
                           <tr
@@ -1599,7 +1701,7 @@ export default function Home() {
                   <div className="flex flex-wrap items-center gap-1.5 text-xs">
                     <button
                       type="button"
-                      onClick={() => handleCopyDomains(viewingSession.items.map((r) => r.domain))}
+                      onClick={() => handleCopyDomains(sortedSessionItems.map((r) => r.domain))}
                       className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-medium shadow-2xs"
                       title="Copy tất cả domain trong lần quét này"
                     >
@@ -1609,7 +1711,7 @@ export default function Home() {
 
                     <button
                       type="button"
-                      onClick={() => handleCopyTable(viewingSession.items)}
+                      onClick={() => handleCopyTable(sortedSessionItems)}
                       className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-medium shadow-2xs"
                       title="Copy bảng số thuần để dán vào Excel"
                     >
@@ -1621,7 +1723,7 @@ export default function Home() {
                       type="button"
                       onClick={() =>
                         handleExportExcel(
-                          viewingSession.items,
+                          sortedSessionItems,
                           `${viewingSession.name.replace(/[^\w\s-]/gi, '_')}.xlsx`
                         )
                       }
@@ -1677,12 +1779,39 @@ export default function Home() {
                       <tr className="bg-slate-100 text-slate-600 font-bold uppercase border-b border-slate-200">
                         <th className="py-2.5 px-3 w-10 text-center">⭐</th>
                         <th className="py-2.5 px-3">DOMAIN</th>
-                        <th className="py-2.5 px-4 text-right">MONTHLY TRAFFIC</th>
+                        <th
+                          onClick={() => setSessionSortOrder(getNextSortOrder(sessionSortOrder))}
+                          className="py-2.5 px-4 text-right cursor-pointer select-none group hover:bg-slate-200/70 transition-colors"
+                          title={
+                            sessionSortOrder === 'desc'
+                              ? 'Đang xếp: Lớn → Bé (Bấm để xếp Bé → Lớn)'
+                              : sessionSortOrder === 'asc'
+                              ? 'Đang xếp: Bé → Lớn (Bấm để về mặc định)'
+                              : 'Bấm để sắp xếp theo traffic (Lớn → Bé)'
+                          }
+                        >
+                          <div className="inline-flex items-center justify-end gap-1.5 font-bold text-slate-600 group-hover:text-blue-600">
+                            <span>MONTHLY TRAFFIC</span>
+                            {sessionSortOrder === 'desc' ? (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-extrabold shadow-2xs">
+                                <span>Lớn → Bé</span>
+                                <ArrowDown className="w-3 h-3 text-blue-600 stroke-[2.5]" />
+                              </span>
+                            ) : sessionSortOrder === 'asc' ? (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-extrabold shadow-2xs">
+                                <span>Bé → Lớn</span>
+                                <ArrowUp className="w-3 h-3 text-blue-600 stroke-[2.5]" />
+                              </span>
+                            ) : (
+                              <ArrowUpDown className="w-3 h-3 text-slate-400 group-hover:text-blue-600 opacity-60 group-hover:opacity-100 transition-opacity" />
+                            )}
+                          </div>
+                        </th>
                         <th className="py-2.5 px-3 w-28 text-center">TRẠNG THÁI</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {filteredSessionItems.map((row, idx) => (
+                      {sortedSessionItems.map((row, idx) => (
                         <tr key={idx} className="hover:bg-slate-50">
                           <td className="py-2 px-3 text-center">
                             {row.status !== 'error' ? (
