@@ -20,6 +20,7 @@ import {
   FileSpreadsheet,
   Zap,
   ExternalLink,
+  BookOpen,
 } from 'lucide-react';
 import { TrafficCheckRecord, DomainCheckResult } from '@/lib/types';
 import { copyDomainsToClipboard, copyTableToClipboard, exportToExcel } from '@/lib/export';
@@ -50,6 +51,7 @@ export default function Home() {
   const [settingsSavedToast, setSettingsSavedToast] = useState(false);
   const [saveSettingsError, setSaveSettingsError] = useState<string | null>(null);
   const [isLoadingKeys, setIsLoadingKeys] = useState(false);
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   // Credit balance states
   const [keyCredits, setKeyCredits] = useState<Record<string, KeyCreditStatus>>({});
@@ -675,6 +677,15 @@ export default function Home() {
 
             <button
               type="button"
+              onClick={() => setIsGuideOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-xs font-semibold text-slate-700 transition-colors shadow-2xs"
+            >
+              <BookOpen className="w-3.5 h-3.5 text-blue-600" />
+              <span>Hướng dẫn lấy Key</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => {
                 setIsSettingsOpen(true);
                 fetchCredits();
@@ -1161,13 +1172,23 @@ export default function Home() {
                     <p className="text-[11px] text-slate-500">Ai cũng có thể điền & thay key. Dữ liệu tự động đồng bộ qua Supabase.</p>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setIsSettingsOpen(false)}
-                  className="p-1 text-slate-400 hover:text-slate-600 rounded-md transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsGuideOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-semibold border border-blue-200 transition-colors"
+                  >
+                    <BookOpen className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Xem hướng dẫn</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsSettingsOpen(false)}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-md transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
 
               {/* Total credits and status banner */}
@@ -1384,6 +1405,121 @@ export default function Home() {
                   ) : (
                     <span>Lưu cấu hình (Đồng bộ cả Team)</span>
                   )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* MODAL HƯỚNG DẪN ĐĂNG KÝ VÀ LẤY API KEY CÓ ẢNH MINH HỌA */}
+        {/* ========================================================================= */}
+        {isGuideOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 max-w-2xl w-full space-y-5 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold shadow-xs">
+                    <BookOpen className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">Hướng Dẫn Đăng Ký & Lấy Scrappa API Key</h3>
+                    <p className="text-xs text-slate-500">Nhận 50 credits/tháng miễn phí cho mỗi tài khoản</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsGuideOpen(false)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-6 text-xs text-slate-700">
+                {/* Bước 1 */}
+                <div className="space-y-2 p-4 rounded-xl border border-slate-200 bg-slate-50/70">
+                  <div className="flex items-center justify-between">
+                    <span className="px-2.5 py-1 rounded-full bg-blue-600 text-white font-bold text-xs">
+                      Bước 1: Đăng ký tài khoản Scrappa miễn phí
+                    </span>
+                    <a
+                      href="https://scrappa.co/register"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 font-bold hover:underline"
+                    >
+                      <span>Mở trang đăng ký scrappa.co</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                  <p className="text-slate-600 leading-relaxed text-[11px]">
+                    Truy cập vào <strong>https://scrappa.co/register</strong>. Điền Họ tên, Email và Mật khẩu rồi bấm <strong>Sign Up Free (50 Credits)</strong>. Bạn sẽ nhận ngay 50 credits Similarweb miễn phí mỗi tháng mà không cần thẻ tín dụng.
+                  </p>
+                  <div className="rounded-xl overflow-hidden border border-slate-200 shadow-sm mt-2 bg-slate-900">
+                    <img
+                      src="/images/guide-step1-register.jpg"
+                      alt="Minh họa đăng ký Scrappa"
+                      className="w-full h-auto object-cover"
+                    />
+                  </div>
+                </div>
+
+                {/* Bước 2 */}
+                <div className="space-y-2 p-4 rounded-xl border border-slate-200 bg-slate-50/70">
+                  <span className="px-2.5 py-1 rounded-full bg-blue-600 text-white font-bold text-xs inline-block">
+                    Bước 2: Lấy API Key từ Scrappa Dashboard
+                  </span>
+                  <p className="text-slate-600 leading-relaxed text-[11px]">
+                    Sau khi đăng nhập, ở thanh menu bên trái chọn mục <strong>API Keys</strong>. Tại ô <strong>Your API Key</strong>, bấm nút <strong>Copy Key</strong> để sao chép chuỗi mã khóa bí mật vào bộ nhớ tạm.
+                  </p>
+                  <div className="rounded-xl overflow-hidden border border-slate-200 shadow-sm mt-2 bg-slate-900">
+                    <img
+                      src="/images/guide-step2-copy-key.jpg"
+                      alt="Minh họa copy API Key từ Scrappa"
+                      className="w-full h-auto object-cover"
+                    />
+                  </div>
+                </div>
+
+                {/* Bước 3 */}
+                <div className="space-y-2 p-4 rounded-xl border border-slate-200 bg-slate-50/70">
+                  <span className="px-2.5 py-1 rounded-full bg-blue-600 text-white font-bold text-xs inline-block">
+                    Bước 3: Dán Key vào app Webchecktraffic & Lưu cấu hình
+                  </span>
+                  <p className="text-slate-600 leading-relaxed text-[11px]">
+                    Quay lại ứng dụng Webchecktraffic, bấm nút <strong>⚙️ Cấu hình API</strong>. Chọn một slot trống (Key #1 đến #10) hoặc slot đang báo đỏ <em>(⚠ 0 credits)</em>, dán key vào và bấm <strong>Lưu cấu hình (Đồng bộ cả Team)</strong>. Key sẽ được đồng bộ ngay lập tức cho toàn bộ các thành viên khác trong team qua Supabase!
+                  </p>
+                  <div className="rounded-xl overflow-hidden border border-slate-200 shadow-sm mt-2 bg-slate-900">
+                    <img
+                      src="/images/guide-step3-paste-app.jpg"
+                      alt="Minh họa dán Key vào Webchecktraffic"
+                      className="w-full h-auto object-cover"
+                    />
+                  </div>
+                </div>
+
+                {/* Mẹo cho Team */}
+                <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 space-y-1">
+                  <div className="font-bold flex items-center gap-1.5 text-amber-950">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>Mẹo tối ưu dung lượng cho cả Team:</span>
+                  </div>
+                  <ul className="list-disc pl-5 space-y-1 text-[11px] text-amber-800">
+                    <li>Mỗi tài khoản miễn phí tại Scrappa nhận 50 credits/tháng.</li>
+                    <li>Với 10 slots key dùng chung, nhóm của bạn có tối đa <strong>500 lượt check Similarweb miễn phí</strong> mỗi tháng.</li>
+                    <li>Hệ thống tự động xoay key khi 1 key hết lượt; khi một key về 0 credits, web sẽ hiện cảnh báo đỏ để các bạn biết và dán key mới vào thay thế.</li>
+                  </ul>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsGuideOpen(false)}
+                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-colors shadow-xs"
+                >
+                  Đã hiểu, đóng hướng dẫn
                 </button>
               </div>
             </div>
