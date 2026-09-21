@@ -24,9 +24,16 @@ import {
   ChevronDown,
   ChevronUp,
   Share2,
+  FolderArchive,
+  Save,
+  Edit3,
+  ArrowLeft,
+  Calendar,
+  Clock,
 } from 'lucide-react';
 import { TrafficCheckRecord, DomainCheckResult } from '@/lib/types';
 import { copyDomainsToClipboard, copyTableToClipboard, exportToExcel } from '@/lib/export';
+import { ScanSession, ScanSessionItem, generateDefaultSessionName } from '@/lib/sessions';
 
 interface KeyCreditStatus {
   key: string;
@@ -97,6 +104,30 @@ export default function Home() {
   const [domainToDelete, setDomainToDelete] = useState<string | null>(null);
   const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Scan sessions state
+  const [sessions, setSessions] = useState<ScanSession[]>([]);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [activeHistoryTab, setActiveHistoryTab] = useState<'all' | 'sessions'>('all');
+  const [viewingSession, setViewingSession] = useState<ScanSession | null>(null);
+  const [sessionSearch, setSessionSearch] = useState('');
+  const [sessionDetailSearch, setSessionDetailSearch] = useState('');
+
+  // Save session modal state
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [sessionNameInput, setSessionNameInput] = useState('');
+  const [isSavingSession, setIsSavingSession] = useState(false);
+  const [saveSessionError, setSaveSessionError] = useState<string | null>(null);
+
+  // Edit / Rename session modal state
+  const [editingSession, setEditingSession] = useState<ScanSession | null>(null);
+  const [editingNameInput, setEditingNameInput] = useState('');
+  const [isRenamingSession, setIsRenamingSession] = useState(false);
+
+  // Delete session modal state
+  const [sessionToDelete, setSessionToDelete] = useState<ScanSession | null>(null);
+  const [isDeletingSession, setIsDeletingSession] = useState(false);
 
   // Load team keys from Supabase (shared across all users)
   const loadSharedTeamKeys = async () => {
@@ -179,10 +210,11 @@ export default function Home() {
     loadSharedTeamKeys();
   }, []);
 
-  // Fetch history when authenticated
+  // Fetch history and sessions when authenticated
   useEffect(() => {
     if (isAuthenticated) {
       fetchHistory();
+      fetchSessions();
     }
   }, [isAuthenticated]);
 
@@ -413,6 +445,166 @@ export default function Home() {
     }
   };
 
+  // Fetch scan sessions from DB
+  const fetchSessions = async () => {
+    setIsLoadingSessions(true);
+    setSessionsError(null);
+    try {
+      const res = await fetch('/api/sessions');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.sessions)) {
+        setSessions(data.sessions);
+        setViewingSession((current) => {
+          if (!current) return null;
+          const found = data.sessions.find((s: ScanSession) => s.id === current.id);
+          return found || null;
+        });
+      } else {
+        setSessionsError(data.error || 'Lỗi tải danh sách lần quét');
+      }
+    } catch (err) {
+      setSessionsError('Không thể kết nối đến máy chủ để tải lần quét');
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  };
+
+  // Open Save Session Modal
+  const handleOpenSaveModal = () => {
+    setSessionNameInput(generateDefaultSessionName());
+    setSaveSessionError(null);
+    setIsSaveModalOpen(true);
+  };
+
+  // Save Current Results as a Session
+  const handleSaveCurrentSession = async () => {
+    if (currentResults.length === 0) return;
+    setIsSavingSession(true);
+    setSaveSessionError(null);
+
+    const nameToSave = sessionNameInput.trim() || generateDefaultSessionName();
+    const items: ScanSessionItem[] = currentResults.map((r) => ({
+      domain: r.domain,
+      monthly_traffic: r.monthly_traffic,
+      status: r.status,
+      is_starred: r.is_starred,
+      checked_at: r.checked_at,
+      error: r.error,
+    }));
+
+    try {
+      const res = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: nameToSave,
+          items,
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.session) {
+        setSessions((prev) => [data.session, ...prev.filter((s) => s.id !== data.session.id)]);
+        setIsSaveModalOpen(false);
+        setCopyFeedback(`Đã lưu lần quét: "${data.session.name}"`);
+        setTimeout(() => setCopyFeedback(null), 3000);
+      } else {
+        setSaveSessionError(data.error || 'Lỗi khi lưu lần quét');
+      }
+    } catch (err) {
+      setSaveSessionError('Không thể kết nối máy chủ');
+    } finally {
+      setIsSavingSession(false);
+    }
+  };
+
+  // Open Rename Session Modal
+  const handleOpenRenameModal = (sess: ScanSession) => {
+    setEditingSession(sess);
+    setEditingNameInput(sess.name);
+  };
+
+  // Confirm Rename Session
+  const handleConfirmRenameSession = async () => {
+    if (!editingSession || !editingNameInput.trim()) return;
+    setIsRenamingSession(true);
+    const newName = editingNameInput.trim();
+
+    try {
+      const res = await fetch('/api/sessions', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editingSession.id,
+          name: newName,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSessions((prev) =>
+          prev.map((s) => (s.id === editingSession.id ? { ...s, name: newName } : s))
+        );
+        if (viewingSession && viewingSession.id === editingSession.id) {
+          setViewingSession((prev) => (prev ? { ...prev, name: newName } : null));
+        }
+        setCopyFeedback(`Đã đổi tên thành "${newName}"`);
+        setTimeout(() => setCopyFeedback(null), 2500);
+        setEditingSession(null);
+      } else {
+        alert(data.error || 'Lỗi khi đổi tên lần quét');
+      }
+    } catch (err) {
+      alert('Không thể kết nối máy chủ');
+    } finally {
+      setIsRenamingSession(false);
+    }
+  };
+
+  // Confirm Delete Session
+  const handleConfirmDeleteSession = async () => {
+    if (!sessionToDelete) return;
+    setIsDeletingSession(true);
+
+    try {
+      const res = await fetch('/api/sessions', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: sessionToDelete.id }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSessions((prev) => prev.filter((s) => s.id !== sessionToDelete.id));
+        if (viewingSession && viewingSession.id === sessionToDelete.id) {
+          setViewingSession(null);
+        }
+        setCopyFeedback(`Đã xóa lần quét "${sessionToDelete.name}"`);
+        setTimeout(() => setCopyFeedback(null), 2500);
+        setSessionToDelete(null);
+      } else {
+        alert(data.error || 'Lỗi khi xóa lần quét');
+      }
+    } catch (err) {
+      alert('Không thể kết nối máy chủ');
+    } finally {
+      setIsDeletingSession(false);
+    }
+  };
+
+  // Helper date format for sessions
+  const formatSessionTime = (isoString?: string | null) => {
+    if (!isoString) return '—';
+    try {
+      const d = new Date(isoString);
+      const hours = String(d.getHours()).padStart(2, '0');
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const year = d.getFullYear();
+      return `${hours}:${minutes} - ${day}/${month}/${year}`;
+    } catch {
+      return isoString;
+    }
+  };
+
   // Toggle Star
   const handleToggleStar = async (domain: string, currentStarred: boolean) => {
     const newStarred = !currentStarred;
@@ -421,6 +613,19 @@ export default function Home() {
     );
     setCurrentResults((prev) =>
       prev.map((item) => (item.domain === domain ? { ...item, is_starred: newStarred } : item))
+    );
+    setViewingSession((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        items: prev.items.map((it) => (it.domain === domain ? { ...it, is_starred: newStarred } : it)),
+      };
+    });
+    setSessions((prev) =>
+      prev.map((s) => ({
+        ...s,
+        items: s.items.map((it) => (it.domain === domain ? { ...it, is_starred: newStarred } : it)),
+      }))
     );
 
     try {
@@ -499,6 +704,21 @@ export default function Home() {
     });
   }, [history, minTrafficInput, maxTrafficInput, starredFilter, domainSearch]);
 
+  // Filter saved sessions
+  const filteredSessions = useMemo(() => {
+    if (!sessionSearch.trim()) return sessions;
+    const query = sessionSearch.trim().toLowerCase();
+    return sessions.filter((s) => s.name.toLowerCase().includes(query));
+  }, [sessions, sessionSearch]);
+
+  // Filter items within the currently viewed session
+  const filteredSessionItems = useMemo(() => {
+    if (!viewingSession) return [];
+    if (!sessionDetailSearch.trim()) return viewingSession.items;
+    const query = sessionDetailSearch.trim().toLowerCase();
+    return viewingSession.items.filter((it) => it.domain.toLowerCase().includes(query));
+  }, [viewingSession, sessionDetailSearch]);
+
   const isAllFilteredSelected =
     filteredHistory.length > 0 &&
     filteredHistory.every((item) => selectedDomains.has(item.domain));
@@ -550,7 +770,7 @@ export default function Home() {
     }
   };
 
-  const handleExportExcel = (rows: TrafficCheckRecord[] | DomainCheckResult[], filename = 'traffic_data.xlsx') => {
+  const handleExportExcel = (rows: any[], filename = 'traffic_data.xlsx') => {
     exportToExcel(rows, filename);
   };
 
@@ -928,8 +1148,18 @@ export default function Home() {
                 )}
               </div>
 
-              {/* Action buttons: Copy & Export */}
+              {/* Action buttons: Save, Copy & Export */}
               <div className="flex items-center gap-1.5 text-xs">
+                <button
+                  type="button"
+                  onClick={handleOpenSaveModal}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-2xs transition-colors"
+                  title="Lưu lại danh sách lần quét này kèm đặt tên để sau này xem lại"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Lưu lần quét này</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => handleCopyDomains(currentResults.map((r) => r.domain))}
@@ -1027,253 +1257,641 @@ export default function Home() {
           </div>
         )}
 
-        {/* History Area */}
-        <div className="space-y-2.5 pt-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-bold text-slate-900 tracking-wide uppercase">
-                KẾT QUẢ ĐÃ QUÉT ({history.length})
-              </h2>
+        {/* History & Saved Sessions Area */}
+        <div className="space-y-3 pt-2">
+          {/* Main Navigation Tabs */}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2.5">
+            <div className="flex items-center gap-1.5 p-1 bg-slate-200/80 rounded-xl shadow-2xs">
               <button
                 type="button"
-                onClick={fetchHistory}
-                disabled={isLoadingHistory}
-                className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800"
+                onClick={() => {
+                  setActiveHistoryTab('all');
+                  setViewingSession(null);
+                }}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  activeHistoryTab === 'all' && !viewingSession
+                    ? 'bg-white text-blue-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
               >
-                <RefreshCw className={`w-3 h-3 ${isLoadingHistory ? 'animate-spin' : ''}`} />
+                <span>📋 Tất cả domain ({history.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveHistoryTab('sessions');
+                }}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  activeHistoryTab === 'sessions' || viewingSession
+                    ? 'bg-white text-blue-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <FolderArchive className="w-3.5 h-3.5" />
+                <span>Các lần quét đã lưu ({sessions.length})</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  fetchHistory();
+                  fetchSessions();
+                }}
+                disabled={isLoadingHistory || isLoadingSessions}
+                className="inline-flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 transition-colors shadow-2xs font-semibold"
+                title="Làm mới dữ liệu từ Supabase"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingHistory || isLoadingSessions ? 'animate-spin text-blue-600' : 'text-slate-500'}`} />
                 <span>Làm mới</span>
               </button>
             </div>
-
-            {/* History Action buttons */}
-            <div className="flex items-center gap-1.5 text-xs">
-              <button
-                type="button"
-                onClick={() => handleCopyDomains(filteredHistory.map((r) => r.domain))}
-                disabled={filteredHistory.length === 0}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 text-slate-700 font-medium"
-                title="Copy tất cả domain đang lọc"
-              >
-                <Copy className="w-3 h-3 text-slate-500" />
-                <span>Copy domain ({filteredHistory.length})</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleCopyTable(filteredHistory)}
-                disabled={filteredHistory.length === 0}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 text-slate-700 font-medium"
-                title="Copy bảng số nguyên thuần túy"
-              >
-                <FileSpreadsheet className="w-3 h-3 text-slate-500" />
-                <span>Copy bảng</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleExportExcel(filteredHistory, `traffic_history_${Date.now()}.xlsx`)}
-                disabled={filteredHistory.length === 0}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-medium"
-                title="Tải file Excel .xlsx"
-              >
-                <Download className="w-3 h-3" />
-                <span>Xuất Excel</span>
-              </button>
-            </div>
           </div>
 
-          {/* Streamlined Filter Bar */}
-          <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-3 space-y-2.5 text-xs">
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5">
-              <div>
-                <input
-                  type="text"
-                  placeholder="Min traffic (vd: 50,000)"
-                  value={minTrafficInput}
-                  onChange={(e) => setMinTrafficInput(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-1.5 font-mono text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
+          {/* TAB 1: ALL DOMAINS (Lịch sử tất cả domain) */}
+          {activeHistoryTab === 'all' && !viewingSession && (
+            <div className="space-y-2.5 animate-in fade-in duration-150">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-bold text-slate-900 tracking-wide uppercase">
+                    DANH SÁCH TẤT CẢ DOMAIN ({history.length})
+                  </h2>
+                </div>
 
-              <div>
-                <input
-                  type="text"
-                  placeholder="Max traffic (vd: 1,000,000)"
-                  value={maxTrafficInput}
-                  onChange={(e) => setMaxTrafficInput(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-1.5 font-mono text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              {/* Starred Tab */}
-              <div className="flex rounded-lg border border-slate-200 p-0.5 bg-slate-50">
-                <button
-                  type="button"
-                  onClick={() => setStarredFilter('all')}
-                  className={`flex-1 py-1 font-semibold rounded transition-all ${
-                    starredFilter === 'all'
-                      ? 'bg-white text-slate-900 shadow-2xs'
-                      : 'text-slate-500'
-                  }`}
-                >
-                  ALL
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStarredFilter('starred')}
-                  className={`flex-1 py-1 font-semibold rounded inline-flex items-center justify-center gap-1 transition-all ${
-                    starredFilter === 'starred'
-                      ? 'bg-white text-amber-600 shadow-2xs'
-                      : 'text-slate-500'
-                  }`}
-                >
-                  <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-                  <span>STARRED</span>
-                </button>
-              </div>
-
-              {/* Quick Search */}
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="Tìm domain..."
-                  value={domainSearch}
-                  onChange={(e) => setDomainSearch(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 pl-8 pr-6 py-1.5 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-                {domainSearch && (
+                {/* History Action buttons */}
+                <div className="flex items-center gap-1.5 text-xs">
                   <button
-                    onClick={() => setDomainSearch('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    type="button"
+                    onClick={() => handleCopyDomains(filteredHistory.map((r) => r.domain))}
+                    disabled={filteredHistory.length === 0}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 text-slate-700 font-medium"
+                    title="Copy tất cả domain đang lọc"
                   >
-                    <X className="w-3 h-3" />
+                    <Copy className="w-3 h-3 text-slate-500" />
+                    <span>Copy domain ({filteredHistory.length})</span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleCopyTable(filteredHistory)}
+                    disabled={filteredHistory.length === 0}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 text-slate-700 font-medium"
+                    title="Copy bảng số nguyên thuần túy"
+                  >
+                    <FileSpreadsheet className="w-3 h-3 text-slate-500" />
+                    <span>Copy bảng</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleExportExcel(filteredHistory, `traffic_history_${Date.now()}.xlsx`)}
+                    disabled={filteredHistory.length === 0}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-medium"
+                    title="Tải file Excel .xlsx"
+                  >
+                    <Download className="w-3 h-3" />
+                    <span>Xuất Excel</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Streamlined Filter Bar */}
+              <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-3 space-y-2.5 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5">
+                  <div>
+                    <input
+                      type="text"
+                      placeholder="Min traffic (vd: 50,000)"
+                      value={minTrafficInput}
+                      onChange={(e) => setMinTrafficInput(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-1.5 font-mono text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <input
+                      type="text"
+                      placeholder="Max traffic (vd: 1,000,000)"
+                      value={maxTrafficInput}
+                      onChange={(e) => setMaxTrafficInput(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-1.5 font-mono text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  {/* Starred Tab */}
+                  <div className="flex rounded-lg border border-slate-200 p-0.5 bg-slate-50">
+                    <button
+                      type="button"
+                      onClick={() => setStarredFilter('all')}
+                      className={`flex-1 py-1 font-semibold rounded transition-all ${
+                        starredFilter === 'all'
+                          ? 'bg-white text-slate-900 shadow-2xs'
+                          : 'text-slate-500'
+                      }`}
+                    >
+                      ALL
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStarredFilter('starred')}
+                      className={`flex-1 py-1 font-semibold rounded inline-flex items-center justify-center gap-1 transition-all ${
+                        starredFilter === 'starred'
+                          ? 'bg-white text-amber-600 shadow-2xs'
+                          : 'text-slate-500'
+                      }`}
+                    >
+                      <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                      <span>STARRED</span>
+                    </button>
+                  </div>
+
+                  {/* Quick Search */}
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Tìm domain..."
+                      value={domainSearch}
+                      onChange={(e) => setDomainSearch(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 pl-8 pr-6 py-1.5 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    {domainSearch && (
+                      <button
+                        onClick={() => setDomainSearch('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {(minTrafficInput || maxTrafficInput || starredFilter !== 'all' || domainSearch) && (
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 border-t border-slate-100 pt-2">
+                    <span>Hiển thị {filteredHistory.length} / {history.length} domain</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMinTrafficInput('');
+                        setMaxTrafficInput('');
+                        setStarredFilter('all');
+                        setDomainSearch('');
+                      }}
+                      className="text-blue-600 hover:underline font-semibold"
+                    >
+                      Đặt lại bộ lọc
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Action Row */}
+              <div className="flex items-center justify-between px-1 text-xs">
+                <label className="inline-flex items-center gap-2 cursor-pointer font-medium text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={isAllFilteredSelected}
+                    onChange={handleToggleSelectAll}
+                    disabled={filteredHistory.length === 0}
+                    className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                  />
+                  <span>Chọn tất cả ({filteredHistory.length})</span>
+                </label>
+
+                <button
+                  type="button"
+                  onClick={() => setIsBulkDeleteModalOpen(true)}
+                  disabled={selectedDomains.size === 0 || isDeleting}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-30 disabled:cursor-not-allowed border border-red-200"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Xóa đã chọn {selectedDomains.size > 0 ? `(${selectedDomains.size})` : ''}</span>
+                </button>
+              </div>
+
+              {/* History Table */}
+              <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+                {filteredHistory.length === 0 ? (
+                  <div className="p-8 text-center text-xs text-slate-400">
+                    {history.length === 0 ? 'Chưa có domain nào được quét.' : 'Không có domain phù hợp.'}
+                  </div>
+                ) : (
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-100 text-slate-600 font-bold uppercase border-b border-slate-200">
+                        <th className="py-2.5 px-3 w-8 text-center"></th>
+                        <th className="py-2.5 px-3 w-8 text-center">⭐</th>
+                        <th className="py-2.5 px-3">DOMAIN</th>
+                        <th className="py-2.5 px-4 text-right">MONTHLY TRAFFIC</th>
+                        <th className="py-2.5 px-3 w-12 text-center"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredHistory.map((row) => {
+                        const isSelected = selectedDomains.has(row.domain);
+                        return (
+                          <tr
+                            key={row.domain}
+                            className={`hover:bg-slate-50 ${isSelected ? 'bg-blue-50/50' : ''}`}
+                          >
+                            <td className="py-2 px-3 text-center">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => handleToggleSelectRow(row.domain)}
+                                className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                              />
+                            </td>
+                            <td className="py-2 px-3 text-center">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleStar(row.domain, row.is_starred)}
+                                className="text-amber-400 hover:text-amber-500"
+                              >
+                                {row.is_starred ? (
+                                  <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                                ) : (
+                                  <Star className="w-3.5 h-3.5 text-slate-300 hover:text-amber-400" />
+                                )}
+                              </button>
+                            </td>
+                            <td className="py-2 px-3 font-mono font-medium text-slate-900">
+                              <a
+                                href={`https://${row.domain}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 hover:text-blue-600 hover:underline group"
+                                title={`Mở https://${row.domain} trong tab mới`}
+                              >
+                                <span>{row.domain}</span>
+                                <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-blue-600 opacity-60 group-hover:opacity-100" />
+                              </a>
+                            </td>
+                            <td className="py-2 px-4 text-right font-mono font-bold text-slate-900">
+                              {formatTraffic(row.monthly_traffic)}
+                            </td>
+                            <td className="py-2 px-3 text-center">
+                              <button
+                                type="button"
+                                onClick={() => setDomainToDelete(row.domain)}
+                                title="Xóa"
+                                className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 )}
               </div>
             </div>
+          )}
 
-            {(minTrafficInput || maxTrafficInput || starredFilter !== 'all' || domainSearch) && (
-              <div className="flex items-center justify-between text-[11px] text-slate-500 border-t border-slate-100 pt-2">
-                <span>Hiển thị {filteredHistory.length} / {history.length} domain</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMinTrafficInput('');
-                    setMaxTrafficInput('');
-                    setStarredFilter('all');
-                    setDomainSearch('');
-                  }}
-                  className="text-blue-600 hover:underline font-semibold"
-                >
-                  Đặt lại bộ lọc
-                </button>
+          {/* VIEWING A SPECIFIC SCAN SESSION DETAIL */}
+          {viewingSession && (
+            <div className="space-y-3 animate-in fade-in duration-200">
+              {/* Session Header Card */}
+              <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setViewingSession(null)}
+                      className="p-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition-colors shadow-2xs flex items-center gap-1 text-xs font-semibold"
+                      title="Quay lại danh sách các lần quét đã lưu"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                      <span>Quay lại</span>
+                    </button>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-base font-bold text-slate-900">{viewingSession.name}</h3>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenRenameModal(viewingSession)}
+                          title="Đổi tên lần quét này"
+                          className="p-1 text-slate-400 hover:text-blue-600 rounded transition-colors"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 mt-0.5">
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5 text-slate-400" />
+                          {formatSessionTime(viewingSession.createdAt)}
+                        </span>
+                        <span>&bull;</span>
+                        <span className="font-semibold text-slate-700">{viewingSession.domainsCount} domain</span>
+                        <span>&bull;</span>
+                        <span className="font-bold text-emerald-600">
+                          Tổng traffic: {formatTraffic(viewingSession.totalTraffic)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Actions for this specific session */}
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => handleCopyDomains(viewingSession.items.map((r) => r.domain))}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-medium shadow-2xs"
+                      title="Copy tất cả domain trong lần quét này"
+                    >
+                      <Copy className="w-3 h-3 text-slate-500" />
+                      <span>Copy domain</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleCopyTable(viewingSession.items)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-medium shadow-2xs"
+                      title="Copy bảng số thuần để dán vào Excel"
+                    >
+                      <FileSpreadsheet className="w-3 h-3 text-slate-500" />
+                      <span>Copy bảng</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleExportExcel(
+                          viewingSession.items,
+                          `${viewingSession.name.replace(/[^\w\s-]/gi, '_')}.xlsx`
+                        )
+                      }
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-2xs"
+                      title="Xuất file Excel cho riêng lần quét này"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Xuất Excel</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSessionToDelete(viewingSession)}
+                      className="inline-flex items-center gap-1 px-2 py-1.5 rounded-md text-red-600 hover:bg-red-50 border border-red-200 font-medium"
+                      title="Xóa lần quét này"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Xóa</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Search within session */}
+                <div className="relative pt-1">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="Tìm domain trong lần quét này..."
+                    value={sessionDetailSearch}
+                    onChange={(e) => setSessionDetailSearch(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 pl-8 pr-6 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  {sessionDetailSearch && (
+                    <button
+                      onClick={() => setSessionDetailSearch('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
               </div>
-            )}
-          </div>
 
-          {/* Action Row */}
-          <div className="flex items-center justify-between px-1 text-xs">
-            <label className="inline-flex items-center gap-2 cursor-pointer font-medium text-slate-700">
-              <input
-                type="checkbox"
-                checked={isAllFilteredSelected}
-                onChange={handleToggleSelectAll}
-                disabled={filteredHistory.length === 0}
-                className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-              />
-              <span>Chọn tất cả ({filteredHistory.length})</span>
-            </label>
-
-            <button
-              type="button"
-              onClick={() => setIsBulkDeleteModalOpen(true)}
-              disabled={selectedDomains.size === 0 || isDeleting}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-30 disabled:cursor-not-allowed border border-red-200"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Xóa đã chọn {selectedDomains.size > 0 ? `(${selectedDomains.size})` : ''}</span>
-            </button>
-          </div>
-
-          {/* History Table */}
-          <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
-            {filteredHistory.length === 0 ? (
-              <div className="p-8 text-center text-xs text-slate-400">
-                {history.length === 0 ? 'Chưa có domain nào được quét.' : 'Không có domain phù hợp.'}
-              </div>
-            ) : (
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-100 text-slate-600 font-bold uppercase border-b border-slate-200">
-                    <th className="py-2.5 px-3 w-8 text-center"></th>
-                    <th className="py-2.5 px-3 w-8 text-center">⭐</th>
-                    <th className="py-2.5 px-3">DOMAIN</th>
-                    <th className="py-2.5 px-4 text-right">MONTHLY TRAFFIC</th>
-                    <th className="py-2.5 px-3 w-12 text-center"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredHistory.map((row) => {
-                    const isSelected = selectedDomains.has(row.domain);
-                    return (
-                      <tr
-                        key={row.domain}
-                        className={`hover:bg-slate-50 ${isSelected ? 'bg-blue-50/50' : ''}`}
-                      >
-                        <td className="py-2 px-3 text-center">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => handleToggleSelectRow(row.domain)}
-                            className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                          />
-                        </td>
-                        <td className="py-2 px-3 text-center">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleStar(row.domain, row.is_starred)}
-                            className="text-amber-400 hover:text-amber-500"
-                          >
-                            {row.is_starred ? (
-                              <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-                            ) : (
-                              <Star className="w-3.5 h-3.5 text-slate-300 hover:text-amber-400" />
-                            )}
-                          </button>
-                        </td>
-                        <td className="py-2 px-3 font-mono font-medium text-slate-900">
-                          <a
-                            href={`https://${row.domain}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 hover:text-blue-600 hover:underline group"
-                            title={`Mở https://${row.domain} trong tab mới`}
-                          >
-                            <span>{row.domain}</span>
-                            <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-blue-600 opacity-60 group-hover:opacity-100" />
-                          </a>
-                        </td>
-                        <td className="py-2 px-4 text-right font-mono font-bold text-slate-900">
-                          {formatTraffic(row.monthly_traffic)}
-                        </td>
-                        <td className="py-2 px-3 text-center">
-                          <button
-                            type="button"
-                            onClick={() => setDomainToDelete(row.domain)}
-                            title="Xóa"
-                            className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
+              {/* Table of items in this session */}
+              <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+                {filteredSessionItems.length === 0 ? (
+                  <div className="p-8 text-center text-xs text-slate-400">
+                    Không tìm thấy domain nào phù hợp trong lần quét này.
+                  </div>
+                ) : (
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-100 text-slate-600 font-bold uppercase border-b border-slate-200">
+                        <th className="py-2.5 px-3 w-10 text-center">⭐</th>
+                        <th className="py-2.5 px-3">DOMAIN</th>
+                        <th className="py-2.5 px-4 text-right">MONTHLY TRAFFIC</th>
+                        <th className="py-2.5 px-3 w-28 text-center">TRẠNG THÁI</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-          </div>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredSessionItems.map((row, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50">
+                          <td className="py-2 px-3 text-center">
+                            {row.status !== 'error' ? (
+                              <button
+                                type="button"
+                                onClick={() => handleToggleStar(row.domain, Boolean(row.is_starred))}
+                                className="text-amber-400 hover:text-amber-500"
+                              >
+                                {row.is_starred ? (
+                                  <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                                ) : (
+                                  <Star className="w-3.5 h-3.5 text-slate-300 hover:text-amber-400" />
+                                )}
+                              </button>
+                            ) : (
+                              <span className="text-slate-300">—</span>
+                            )}
+                          </td>
+                          <td className="py-2 px-3 font-mono font-medium text-slate-900">
+                            <div className="flex items-center gap-2">
+                              <a
+                                href={`https://${row.domain}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 hover:text-blue-600 hover:underline group"
+                                title={`Mở https://${row.domain} trong tab mới`}
+                              >
+                                <span>{row.domain}</span>
+                                <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-blue-600 opacity-60 group-hover:opacity-100" />
+                              </a>
+                            </div>
+                          </td>
+                          <td className="py-2 px-4 text-right font-mono font-bold text-slate-900">
+                            {row.status === 'error' ? (
+                              <span className="text-red-600 font-sans font-medium">
+                                {row.error || 'Lỗi'}
+                              </span>
+                            ) : (
+                              formatTraffic(row.monthly_traffic)
+                            )}
+                          </td>
+                          <td className="py-2 px-3 text-center">
+                            {row.status === 'cached' ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                Cache
+                              </span>
+                            ) : row.status === 'error' ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-50 text-red-700 border border-red-200">
+                                Lỗi
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                                Similarweb
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: SAVED SESSIONS LIST (Danh sách các lần quét đã lưu) */}
+          {activeHistoryTab === 'sessions' && !viewingSession && (
+            <div className="space-y-3 animate-in fade-in duration-200">
+              {/* Toolbar & Search */}
+              <div className="bg-white rounded-xl border border-slate-200 p-3 shadow-2xs flex flex-wrap items-center justify-between gap-2.5">
+                <div className="relative flex-1 min-w-[200px]">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="Tìm kiếm lần quét theo tên..."
+                    value={sessionSearch}
+                    onChange={(e) => setSessionSearch(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 pl-8 pr-6 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  {sessionSearch && (
+                    <button
+                      onClick={() => setSessionSearch('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="text-xs text-slate-500 font-medium">
+                  Hiển thị <span className="font-bold text-slate-800">{filteredSessions.length}</span> / {sessions.length} lần quét đã lưu
+                </div>
+              </div>
+
+              {/* Sessions List */}
+              {filteredSessions.length === 0 ? (
+                <div className="bg-white rounded-xl border border-slate-200 p-10 text-center space-y-3 shadow-2xs">
+                  <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto border border-blue-100">
+                    <FolderArchive className="w-6 h-6" />
+                  </div>
+                  {sessions.length === 0 ? (
+                    <div className="space-y-1">
+                      <h4 className="text-sm font-bold text-slate-800">Chưa có lần quét nào được lưu</h4>
+                      <p className="text-xs text-slate-500 max-w-md mx-auto">
+                        Sau khi bấm <strong>CHECK TRAFFIC</strong> ở trên, hãy bấm nút <strong>&quot;Lưu lần quét này&quot;</strong> để đặt tên (hoặc dùng tên mặc định ngày giờ) và lưu lại để cả nhóm cùng xem.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <h4 className="text-sm font-bold text-slate-800">Không tìm thấy lần quét phù hợp</h4>
+                      <p className="text-xs text-slate-500">
+                        Thử xóa từ khóa tìm kiếm hoặc kiểm tra lại tên lần quét.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-2.5">
+                  {filteredSessions.map((sess) => (
+                    <div
+                      key={sess.id}
+                      className="bg-white rounded-xl border border-slate-200 p-3.5 hover:border-blue-300 hover:shadow-xs transition-all flex flex-wrap items-center justify-between gap-3"
+                    >
+                      <div className="space-y-1 flex-1 min-w-[240px]">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setViewingSession(sess)}
+                            className="font-bold text-sm text-slate-900 hover:text-blue-600 transition-colors text-left"
+                          >
+                            {sess.name}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenRenameModal(sess)}
+                            title="Đổi tên lần quét"
+                            className="p-1 text-slate-400 hover:text-blue-600 rounded transition-colors"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                          <span className="flex items-center gap-1 font-medium">
+                            <Clock className="w-3 h-3 text-slate-400" />
+                            {formatSessionTime(sess.createdAt)}
+                          </span>
+                          <span>&bull;</span>
+                          <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 font-bold border border-blue-100">
+                            {sess.domainsCount} domain
+                          </span>
+                          <span>&bull;</span>
+                          <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-bold border border-emerald-100">
+                            {formatTraffic(sess.totalTraffic)} traffic
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Card Action buttons */}
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setViewingSession(sess)}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold border border-blue-200 transition-colors shadow-2xs"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Xem chi tiết</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleCopyTable(sess.items)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-medium shadow-2xs"
+                          title="Copy bảng số thuần để dán vào Excel"
+                        >
+                          <FileSpreadsheet className="w-3.5 h-3.5 text-slate-500" />
+                          <span>Copy</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleExportExcel(
+                              sess.items,
+                              `${sess.name.replace(/[^\w\s-]/gi, '_')}.xlsx`
+                            )
+                          }
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-2xs"
+                          title="Xuất file Excel (.xlsx)"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Excel</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setSessionToDelete(sess)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                          title="Xóa lần quét này"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* ========================================================================= */}
@@ -1732,6 +2350,188 @@ export default function Home() {
                   className="flex-1 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold"
                 >
                   {isDeleting ? '...' : 'Xóa'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* MODAL LƯU LẦN QUÉT VỪA XONG KÈM ĐẶT TÊN */}
+        {/* ========================================================================= */}
+        {isSaveModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+            <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-6 max-w-md w-full space-y-4 animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shadow-xs">
+                    <Save className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">Lưu Lần Quét Vừa Xong</h3>
+                    <p className="text-[11px] text-slate-500">Lưu {currentResults.length} domain vừa check vào hệ thống</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSaveModalOpen(false)}
+                  disabled={isSavingSession}
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded-md transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSaveCurrentSession();
+                }}
+                className="space-y-3.5 text-xs"
+              >
+                <div>
+                  <label className="block font-bold text-slate-800 mb-1.5">
+                    Đặt tên lần quét:
+                  </label>
+                  <input
+                    type="text"
+                    value={sessionNameInput}
+                    onChange={(e) => setSessionNameInput(e.target.value)}
+                    placeholder={generateDefaultSessionName()}
+                    autoFocus
+                    className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600 transition-all shadow-2xs font-medium"
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed">
+                    💡 <strong>Gợi ý:</strong> Nếu để trống, hệ thống sẽ tự động đặt tên mặc định theo ngày giờ quét: <em>&quot;{generateDefaultSessionName()}&quot;</em>
+                  </p>
+                </div>
+
+                {saveSessionError && (
+                  <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-medium flex items-center gap-1.5">
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                    <span>{saveSessionError}</span>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setIsSaveModalOpen(false)}
+                    disabled={isSavingSession}
+                    className="flex-1 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingSession}
+                    className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-xs font-bold transition-colors shadow-xs flex items-center justify-center gap-2"
+                  >
+                    {isSavingSession ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Đang lưu...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-3.5 h-3.5" />
+                        <span>Lưu lần quét</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal Đổi Tên Lần Quét */}
+        {editingSession && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+            <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-5 max-w-sm w-full space-y-3.5 animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                  <Edit3 className="w-4 h-4 text-blue-600" />
+                  <span>Đổi Tên Lần Quét</span>
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setEditingSession(null)}
+                  className="p-1 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleConfirmRenameSession();
+                }}
+                className="space-y-3 text-xs"
+              >
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Tên mới:</label>
+                  <input
+                    type="text"
+                    value={editingNameInput}
+                    onChange={(e) => setEditingNameInput(e.target.value)}
+                    autoFocus
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setEditingSession(null)}
+                    disabled={isRenamingSession}
+                    className="flex-1 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isRenamingSession || !editingNameInput.trim()}
+                    className="flex-1 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-xs font-bold transition-colors"
+                  >
+                    {isRenamingSession ? 'Đang lưu...' : 'Lưu tên mới'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal Xóa Lần Quét */}
+        {sessionToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+            <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-5 max-w-xs w-full space-y-3 text-center animate-in fade-in zoom-in-95 duration-150">
+              <div className="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-sm font-bold text-slate-900">Xóa Lần Quét Này?</h4>
+                <p className="text-xs text-slate-600">
+                  Bạn có chắc muốn xóa lần quét <span className="font-semibold text-slate-900">&quot;{sessionToDelete.name}&quot;</span> ({sessionToDelete.domainsCount} domain)?
+                </p>
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setSessionToDelete(null)}
+                  disabled={isDeletingSession}
+                  className="flex-1 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteSession}
+                  disabled={isDeletingSession}
+                  className="flex-1 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold"
+                >
+                  {isDeletingSession ? 'Đang xóa...' : 'Xóa luôn'}
                 </button>
               </div>
             </div>
